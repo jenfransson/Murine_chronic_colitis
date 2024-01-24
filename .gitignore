@@ -1,3 +1,5 @@
+.DS_Store
+
 # History files
 .Rhistory
 .Rapp.history
@@ -30,7 +32,8 @@ vignettes/*.pdf
 
 # knitr and R markdown default cache directories
 *_cache/
-/cache/
+*_files/
+data/SingleCell/*/cache/
 
 # Temporary files created by R markdown
 *.utf8.md
@@ -47,3 +50,11 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+
+# Processed data files
+data/*rds
+
+# Raw data files
+data/SingleCell/TcellTransfer/expression_matrices/
+data/Bulk/mouseKEGG.rds

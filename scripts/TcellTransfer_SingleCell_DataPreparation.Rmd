@@ -1,0 +1,924 @@
+---
+title: "Preparation of data for T cell transfer single cell analysis"
+editor_options:
+  chunk_output_type: console
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  bookdown::html_document2:
+    code_folding: hide
+    toc: yes
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+params:
+  dataset: 1
+---
+
+```{r Setup, echo = FALSE}
+knitr::opts_chunk$set(fig.width  = 7,
+                      results    = "hold",
+                      message    = FALSE,
+                      cache.lazy = FALSE,
+                      warning    = FALSE)
+
+
+```
+
+```{r setup}
+
+library(Seurat)
+library(Matrix)
+library(ggplot2)
+library(cowplot)
+library(DoubletFinder)
+library(clustree)
+
+library(future)
+n_workers = 20
+plan("multisession", workers = n_workers)
+options(future.globals.maxSize = 1000 * 1024^3)
+#options(future.globals.maxSize = 10 * 1024^3)
+library(future.apply)
+
+datadir = "../data/SingleCell/TcellTransfer/expression_matrices"
+
+owncache = "../data/SingleCell/TcellTransfer/cache/"
+
+violintheme = theme(axis.text = element_text(size = 8),
+        plot.title = element_text(size = 10),
+        axis.title = element_blank())
+
+```
+
+
+# Load data
+
+```{r loading_matrices}
+
+if(!file.exists(paste0(owncache,"/loading_matrices.RData"))){
+
+loadObject = function(d){
+  sample = sub("\\.h5","",sub(".*/","",d))
+  expression_mat = Read10X_h5(filename = d)
+  if(class(expression_mat)=="dgCMatrix"){
+    data_obj = CreateSeuratObject(expression_mat, sample)
+  }else{
+      data_obj = CreateSeuratObject(expression_mat$`Gene Expression`, sample)
+      data_obj[["FB"]] = CreateAssayObject(expression_mat$`Antibody Capture`)
+      data_obj@active.assay = "RNA"
+  }
+  data_obj
+}
+
+system.time(
+  {
+    datafiles = list.files(datadir, full.names = TRUE)
+    all_matrices = future_lapply(datafiles, function(d){
+      message(d)
+      sample = sub("\\.h5","",sub(".*/","",d))
+      message(sample)
+  loadObject(d)
+})
+names(all_matrices) = sub("\\.h5","",sub(".*/","",datafiles))
+gc()})
+
+alldata = merge(x = all_matrices[[1]],
+                y = all_matrices[-1],
+                add.cell.ids = names(all_matrices))
+
+rm(all_matrices)
+rm(loadObject)
+gc()
+
+if(file.exists(owncache)){
+  save(alldata, paste0(owncache,"/loading_matrices.RData"))
+}
+
+}else{
+  l = load(paste0(owncache,"/loading_matrices.RData"))
+}
+
+
+```
+
+```{r addmetadata}
+
+metadata = read.csv2(paste0(datadir,"/../metadata.csv"))
+colnames(metadata) = gsub("X","",gsub("\\.","",colnames(metadata)))
+
+alldata = AddMetaData(alldata, 
+                      factor(metadata[match(alldata$orig.ident, metadata$libraryname),"genotype"],
+                             levels = c("BALB/c SCID", "Rag2 KO"),
+                             labels = c("SCID","Rag2")),
+                      "Model")
+alldata = AddMetaData(alldata, metadata[match(alldata$orig.ident, metadata$libraryname),"time"],
+                      "Time")
+alldata = AddMetaData(alldata, 
+                      metadata[match(alldata$orig.ident, metadata$libraryname),"celltype"],
+                      "Type")
+alldata = AddMetaData(alldata, 
+                      factor(metadata[match(alldata$orig.ident, metadata$libraryname),"antiIL12p40"],
+                             levels = c("no", "yes"), labels = c("ut","il")),
+                      "Treatment")
+
+alldata <- AddMetaData(alldata,
+                       sapply(alldata$Time,
+                              function(x){if(substr(x,1,1) == "D"){
+                                return(as.numeric(gsub("D","",x))/60)
+                                }else{
+                                  return(as.numeric(gsub("W","",x))/7)}}), "RelTime")
+
+
+alldata <- PercentageFeatureSet(alldata, "^mt-", col.name = "percent_mito")
+
+alldata <- PercentageFeatureSet(alldata, "^Rp[sl]", col.name = "percent_ribo")
+
+```
+
+# Plot QC vars
+
+Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
+
+```{r qc, fig.height=10}
+
+qc_feats <- c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo")
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
+  violintheme
+  
+
+```
+
+
+# Filter cells and genes
+
+The same QC as above are plotted below, only including cells and genes that pass filtering limits (gene limit: > 3 copies expressed, cell filter: > 200 unique genes). The top expressed genes are also shown. Mitochondrial and ribosomal genes are filtered out of the data, as are the highly expressed genes Malat1 and Gm42418. 
+
+```{r filtering}
+
+
+alldata <- subset(alldata, features = rownames(alldata)[Matrix::rowSums(alldata) > 3], 
+                  cells = intersect(WhichCells(alldata, expression = nFeature_RNA > 200),
+                                    intersect(WhichCells(alldata, expression = percent_mito < 10),
+                                    WhichCells(alldata, expression = percent_ribo > 5))))
+
+gc()
+
+```
+
+```{r type_qc_violins, fig.height = 10}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
+    NoLegend() & violintheme
+
+
+VlnPlot(subset(alldata,
+               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Immune"])),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
+    NoLegend() & violintheme
+VlnPlot(subset(alldata,
+               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Stroma"])),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
+    NoLegend() & violintheme
+VlnPlot(subset(alldata,
+               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Epithelial"])),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
+    NoLegend() & violintheme
+
+```
+
+```{r topexpressed, fig.height = 10, cache = TRUE}
+
+par(mar = c(4, 8, 2, 1))
+C <- subset(alldata, downsample = 1000, seed = 42)@assays$RNA@counts
+C <- Matrix::t(Matrix::t(C)/Matrix::colSums(C)) * 100
+#nC = ncol(C)
+
+most_expressed <- order(apply(C, 1, median), decreasing = T)[20:1]
+ 
+boxplot(as.matrix(t(C[most_expressed, ])), cex = 0.1, las = 1, xlab = "% total count per cell",
+     col = (scales::hue_pal())(20)[20:1], horizontal = TRUE)
+
+
+rm(C)
+rm(most_expressed)
+
+
+
+# Filter MALAT1, Gm42418, mitochondrial genes and ribosomal genes
+alldata <- alldata[!grepl("Malat1", rownames(alldata)) & 
+                     !grepl("Gm42418", rownames(alldata)) & 
+                     !grepl("^mt-", rownames(alldata)) & ! 
+                     grepl('^Rp[sl]', rownames(alldata)), ]
+
+```
+
+
+
+knitr::kable(table(alldata$orig.ident))
+
+
+```{r}
+
+message(ls())
+
+```
+
+
+# Cell cycle scores
+
+The S-phase and G2M-phase scores are calculated based on the cell cycle gene lists defined in the Seurat package (translated to mouse genes originally using biomaRt).
+
+```{r cellcyclescores}
+
+if(!file.exists(paste0(owncache,"/cellcyclescores.RData"))){
+
+  g2mFeat = c("Smc4","Dlgap5","Ctcf","Cdc25c","Gtse1","Kif20b",
+              "Ttk","Tacc3","Top2a","Tpx2","Cdca3","Ncapd2",
+              "Cks2","Anp32e","G2e3","Lbr","Cdca2","Cks1brt",
+              "Ckap2","Hmgb2","Kif11","Nek2","Cenpe","Hjurp",
+              "Ect2","Aurkb","Cks1b","Kif23","Nuf2","Hmmr",
+              "Cdca8","Psrc1","Anln","Cdc20","Birc5","Ndc80",
+              "Rangap1","Ckap5","Kif2c","Cenpf","Nusap1","Cenpa",
+              "Aurka","Ube2c","Ckap2l","Mki67","Tubb4b","Bub1",
+              "Ccnb2")
+  sFeat = c("Msh2","Exo1","Mcm4","Rrm2","Mcm2","Chaf1b","Gmnn",
+            "Cdc45","Slbp","Ubr7","Cdc6",
+            "Rad51ap1","Rpa2","Hells","Fen1","Gins2","Uhrf1",
+            "Mcm6","Ung","Dscc1","Usp1","Clspn",
+            "Cdca7","Pola1","Nasp","Dtl","Mcm5","Wdr76","Prim1",
+            "Casp8ap2","Tipin","Blm","Rrm1",
+            "Brip1","Rad51","Tyms","E2f8","Rfc2","Ccne2","Pcna")
+
+
+
+
+# Before running CellCycleScoring the data need to be normalized and
+# logtransformed.
+
+plan("sequential")
+alldata = NormalizeData(alldata)
+
+alldata <- CellCycleScoring(object = alldata, g2m.features = g2mFeat, 
+    s.features = sFeat)
+
+rm(g2mFeat)
+rm(sFeat)
+gc()
+
+
+if(file.exists(owncache)){
+  save(alldata, paste0(owncache,"/cellcyclescores.RData"))
+}
+
+}else{
+  l = load(paste0(owncache,"/cellcyclescores.RData"))
+}
+
+
+```
+
+
+```{r}
+
+VlnPlot(alldata, features = c("S.Score", "G2M.Score"), group.by = "orig.ident", 
+    ncol = 3, pt.size = 0.1)
+
+VlnPlot(alldata, features = c("S.Score", "G2M.Score"), group.by = "orig.ident", 
+    ncol = 3, pt.size = 0)
+
+
+```
+
+
+# Find Doublets
+
+Doublets are identified and excluded using the DoubletFinder package.
+
+
+```{r df_prep, cache = TRUE}
+
+plan("multisession", workers = n_workers)
+
+  alldata = FindVariableFeatures(alldata, verbose = F)
+  alldata = ScaleData(alldata, vars.to.regress = c("nFeature_RNA", "percent_mito"), 
+      verbose = F)
+  alldata = RunPCA(alldata, verbose = F, npcs = 20)
+  alldata = RunUMAP(alldata, dims = 1:10, verbose = F)
+  
+
+```
+
+```{r doublets, cache = TRUE}
+  
+plan("multisession", workers = n_workers)
+
+sweeplist = list()
+
+singletList = future_lapply(unique(alldata$orig.ident), function(i){
+  message(i)
+  subdata=subset(alldata, idents = i)
+  sweep.res <- paramSweep_v3(subdata)#, num.cores = 3)
+  sweep.stats <- summarizeSweep(sweep.res, GT = FALSE)
+  bcmvn = find.pK(sweep.stats)
+
+  nExp <- round(ncol(subdata) * ifelse(ncol(subdata)<1200,0.08,ifelse(ncol(subdata)<2200,0.16,0.24)))  # the expected number of doublets was overestimated in the published analysis, but correcting this does not lead to a significant difference in the prediction
+  mypK = as.numeric(as.character(bcmvn$pK[which.max(bcmvn$BCmetric)]))
+  subdata <- doubletFinder_v3(subdata, pN = 0.25, pK = mypK, nExp = nExp, PCs = 1:10)
+  DF.name = colnames(subdata@meta.data)[grepl("DF.classification", colnames(subdata@meta.data))]
+  sl = subdata@meta.data[, DF.name]
+  names(sl) = colnames(subdata) 
+})
+names(singletList) = unique(alldata$orig.ident)
+
+alldata = AddMetaData(alldata, unlist(singletList)[
+  match(colnames(alldata), 
+        gsub(".*\\.","",names(unlist(singletList))))], "DF")
+
+cowplot::plot_grid(ncol = 2, DimPlot(alldata, group.by = "orig.ident") + NoAxes(), 
+    DimPlot(alldata, group.by = "DF") + NoAxes())
+
+
+```
+
+
+```{r df_dimplot, fig.height = 10}
+
+DimPlot(alldata, group.by = "DF", split.by = "orig.ident", ncol = 6) + NoAxes()
+
+```
+
+
+```{r df_violins}
+
+VlnPlot(alldata, features = "nFeature_RNA", group.by = "DF",pt.size = 0.1)
+VlnPlot(alldata, features = "nFeature_RNA", split.by = "DF", group.by = "orig.ident", pt.size = 0.1)
+
+alldata = alldata[, alldata@meta.data[, "DF"] == "Singlet"]
+
+```
+
+
+
+```{r cellcounts}
+
+table(alldata$orig.ident)
+
+cellfreq = as.data.frame(table(alldata$orig.ident), stringsAsFactors = FALSE)
+cellfreq$Time = alldata$Time[match(cellfreq$Var1, alldata$orig.ident)]
+cellfreq$Type = alldata$Type[match(cellfreq$Var1, alldata$orig.ident)]
+cellfreq$Treatment = alldata$Treatment[match(cellfreq$Var1, alldata$orig.ident)]
+ggplot(cellfreq, aes(x = paste(Week, Treatment), y = Freq, color = Type)) + geom_point() +
+  theme(panel.background = element_blank(), legend.key = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Week and treatment", y = "Number of cells")
+
+```
+
+
+```{r violins}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0.1, ncol = 2) +
+    NoLegend()
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend()
+
+```
+
+
+```{r typeviolins}
+
+VlnPlot(alldata[,alldata$Type == "Stroma"],
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend()
+VlnPlot(alldata[,alldata$Type == "Epithelial"],
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend()
+VlnPlot(alldata[,alldata$Type == "Immune"],
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend()
+
+
+
+```
+
+
+
+
+```{r firstnormalize, cache = TRUE}
+
+alldata = NormalizeData(alldata)
+
+suppressWarnings(suppressMessages(alldata <- FindVariableFeatures(alldata, selection.method = "vst", 
+    nfeatures = 2000, verbose = FALSE, assay = "RNA")))
+alldata <- ScaleData(alldata, vars.to.regress = c("percent_mito", "nFeature_RNA"),     assay = "RNA")
+alldata <- RunPCA(alldata, npcs = 50, verbose = F, reduction.name = "pca_raw")
+alldata <- RunTSNE(alldata, reduction = "pca_raw", dims = 1:30, perplexity = 30, max_iter = 1000, 
+    theta = 0.5, eta = 200, num_threads = 0, reduction.name = "tsne_raw")
+alldata <- RunUMAP(alldata, reduction = "pca_raw", dims = 1:30, n.components = 2, n.neighbors = 30, 
+    n.epochs = 200, min.dist = 0.3, learning.rate = 1, spread = 1, reduction.name = "umap_raw")
+
+```
+
+
+```{r topgenes}
+
+top20 <- head(VariableFeatures(alldata), 20)
+
+LabelPoints(plot = VariableFeaturePlot(alldata), points = top20, repel = TRUE)
+
+```
+
+
+# PCA
+
+```{r firstpca}
+
+plot_grid(ncol = 3, 
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", 
+                  dims = 1:2) + NoLegend(),
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", 
+                  dims = 3:4) + NoLegend(),
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", 
+                  dims = 5:6) + NoLegend())
+
+
+VizDimLoadings(alldata, dims = 1:5, reduction = "pca_raw", ncol = 5, balanced = T)
+
+ElbowPlot(alldata, reduction = "pca_raw", ndims = 50)
+
+```
+
+# t-SNE
+
+```{r firsttsne}
+
+plot_grid(ncol = 2, DimPlot(alldata, reduction = "tsne_raw", group.by = "orig.ident") + 
+            NoAxes() + NoLegend(), 
+          DimPlot(alldata, reduction = "tsne_raw", group.by = "RelTime") + 
+            NoAxes() + NoLegend(), 
+          DimPlot(alldata, reduction = "tsne_raw", group.by = "Type") + 
+            NoAxes() + NoLegend())
+
+```
+
+
+# UMAP
+
+```{r firstumap}
+
+plot_grid(ncol = 3, DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident") +
+            NoAxes() + NoLegend(),
+    FeaturePlot(alldata, "RelTime", reduction = "umap_raw") + NoAxes() + NoLegend(),
+    DimPlot(alldata, group.by = "Type") + NoAxes() + NoLegend()) 
+
+```
+
+
+# Integrate data
+
+```{r getanchors, cache = TRUE}
+
+alldata <- AddMetaData(alldata, gsub("_I_","_",gsub("_S_","_",
+                            gsub("_E_","_",gsub("_Str","",gsub("_Imm","",
+                            gsub("_Epi","",alldata$orig.ident)))))), 
+                     "source")
+data.list <- SplitObject(alldata, split.by = "source")
+    
+data.list = lapply(data.list, function(x){
+    x <- NormalizeData(x, verbose = FALSE)
+    x <- FindVariableFeatures(x, selection.method = "vst",
+        nfeatures = 2000, verbose = FALSE)
+    x
+})
+    
+features <- SelectIntegrationFeatures(object.list = data.list)
+data.list <- lapply(X = data.list, FUN = function(x) {
+  x <- ScaleData(x, features = features, verbose = FALSE)
+  x <- RunPCA(x, features = features, verbose = FALSE)
+})
+
+data.anchors <- FindIntegrationAnchors(object.list = data.list, dims = 1:30, 
+    reduction = "rpca", anchor.features = features, 
+    reference = match(c("G_W0","G_W7","G_D0_ut","G_D60_ut",
+                        "G_W7_aIL12","G_D30_il","G_D40_il",
+                        "G_D60_il","G_W3_aIL12","G_W5_aIL12"),
+                      names(data.list)))
+
+rm(data.list)
+gc()
+
+```
+
+```{r fullintegration, cache = TRUE}
+
+alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "RPCA")
+
+rm(data.anchors)
+gc()
+  
+```
+
+
+```{r normalizeintegrated, cache = TRUE}
+
+alldata <- ScaleData(alldata)
+alldata <- RunPCA(alldata, npcs = 30)
+alldata <- RunUMAP(alldata, dims = 1:30)
+
+```
+
+
+```{r}
+
+plot_grid(ncol = 2,
+  DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", pt.size = 0.01) +
+    NoAxes() + ggtitle("PCA raw_data") + NoLegend(),
+  DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident", pt.size = 0.01) +
+    NoAxes() + ggtitle("UMAP raw_data") + NoLegend(),
+  
+  DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident") +
+    NoAxes() + ggtitle("PCA integrated") + NoLegend(),
+  DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident") +
+    NoAxes() + ggtitle("UMAP integrated") + NoLegend()
+)
+
+DimPlot(alldata, reduction = "umap", split.by = "orig.ident")+NoAxes() + NoLegend()
+
+DimPlot(alldata, reduction = "umap", group.by = "Model", shuffle = TRUE) + NoAxes()
+
+
+```
+
+# Plot QC in UMAP
+
+```{r, fig.height = 10}
+
+FeaturePlot(alldata, reduction = "umap", 
+            features = qc_feats, 
+    order = T, slot = "data", combine = T)
+
+```
+
+
+
+# Plot genes of interest
+
+```{r}
+
+DefaultAssay(alldata) = "RNA"
+
+FeaturePlot(alldata, reduction = "umap", features = c("Mki67","Pcna"), 
+    order = T, slot = "data", combine = T)
+
+FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), 
+    order = T, slot = "data", combine = T)
+
+DefaultAssay(alldata) = "RPCA"
+
+```
+
+
+# Clustering to identify sorting contaminations
+
+
+```{r}
+
+getseedcells = function(seeds, meta){
+  big = sum(sapply(table(meta$orig.ident), function(x){return(min(x,5000))}))
+
+fullnumbers = sort(table(meta$orig.ident))
+proportions = fullnumbers/nrow(meta)
+numbers = round(proportions*big)
+numbers[numbers<1000] = fullnumbers[numbers<1000]
+names(numbers) = names(proportions)
+
+
+seeddf = data.frame(matrix(nrow=nrow(meta), ncol = length(seeds), 0))
+colnames(seeddf) = paste0("seed",seeds)
+rownames(seeddf) = rownames(meta)
+
+for(thisseed in seeds){
+  for(i in unique(meta$orig.ident)){
+    set.seed(thisseed)
+    take = numbers[i]
+    cells = sample(rownames(meta)[meta$orig.ident == i], size = take)
+    seeddf[cells,paste0("seed",thisseed)] = 1
+  }
+}
+
+seeddf$included = apply(seeddf, 1, sum)
+allcols = colnames(seeddf)[grep("seed",colnames(seeddf))]
+
+set.seed(42)
+
+currcol = 1
+while(min(seeddf$included)<5){
+  if(currcol>length(allcols)){
+    currcol = 1
+  }
+  toofewall = rownames(seeddf)[seeddf$included<5 & seeddf[,currcol] == 0]
+  toomanyall = rownames(seeddf)[seeddf$included>7 & seeddf$included<length(allcols) & seeddf[,currcol] == 1]
+  least = min(length(toofewall), length(toomanyall))
+  toofew = sample(toofewall, size = min(least,1000))
+  toomany = sample(toomanyall, size = min(least,1000))
+  seeddf[toofew,currcol] = 1
+  seeddf[toomany,currcol] = 0
+  seeddf[c(toofew, toomany),"included"] = apply(seeddf[c(toofew, toomany),allcols], 1, sum)
+  currcol = currcol + 1
+  if(sum(seeddf[,currcol]) != 241406){print(sum(seeddf[,currcol]))}
+}
+}
+
+combineclusters = function(default =, clusters = , meta = ){
+  
+clusterdf = clusters[[1]]
+  
+for(i in 2:length(clusters)){
+  clusterdf = merge(clusterdf, clusters[[i]], by = "Cell", all = TRUE)
+}
+  
+meta = merge(meta, clusterdf, by.x = "row.names", by.y = "Cell")
+rownames(meta) = meta[,1]
+meta = meta[,-1]
+  
+clustercols = grep("seed",colnames(meta))
+
+
+for(i in colnames(meta)[grep("cluster_seed",colnames(meta))]){
+  meta[,i] = factor(meta[,i],levels = c(sort(unique(meta[,i])),9999))
+  meta[is.na(meta[,i]),i] = 9999
+  
+}
+
+translators = list()
+for(j in grep("cluster_seed", colnames(meta))){
+  for(i in grep("cluster_seed", colnames(meta))){
+    if(i!=j){
+      ft = table(old = meta[,j], new = meta[,i])
+      translators[[colnames(meta)[j]]][[colnames(meta)[i]]] = 
+        data.frame(new = c(colnames(ft)[-ncol(ft)],9999), 
+                   newnew = c(rownames(ft)[
+                     apply(ft[-nrow(ft),-ncol(ft)],2,which.max)],9999))
+      translators[[colnames(meta)[j]]][[colnames(meta)[i]]]$prop = 
+        c(apply(ft[-nrow(ft),-ncol(ft)],2,function(x){max(x)/sum(x)}),NA)
+    }
+    
+  }
+}
+
+tps = matrix(ncol = length(grep("cluster_seed", colnames(meta))), nrow = nrow(meta))
+rownames(tps) = rownames(meta)
+colnames(tps) = colnames(meta)[grep("cluster_seed", colnames(meta))]
+
+for(i in grep("cluster_seed", colnames(meta))){
+  iname = colnames(meta)[i]
+  if(iname!=default){
+    tps[,iname] = as.numeric(as.character(translators[[default]][[iname]]$newnew[match(
+      as.character(meta[,i]),as.character(translators[[default]][[iname]]$new)
+    )]))
+  }else{
+    tps[,iname] = as.numeric(as.character(meta[,i]))
+  }
+}
+
+tps[tps == 9999] = NA
+
+toptranslation = apply(tps, 1, function(x){
+  if(sum(!is.na(x)>0)){names(sort(table(x), decreasing = TRUE))[1]}else{NA}})
+
+meta$RPCA_cluster = as.numeric(unlist(toptranslation))
+
+if(length(stillNA = which(is.na(meta[,"RPCA_cluster"])))>0){stop("there are still non-assigned cells")}
+
+meta
+
+}
+
+```
+
+```{r, cache = TRUE}
+
+
+meta = alldata@meta.data
+
+seeddf = getseedcells(seeds = c(123,42,666,789,345,636,234,542628,57362,
+          059482,7665,2342,82349,953020,03248,1284,
+          4135,659,2340,6543,602), meta = meta)
+
+
+res = 0.5
+
+clusters = lapply(gsub("seed","",colnames(seeddf)), function(seed){
+  seedcells = rownames(seeddf)[seeddf[,match(paste0("seed",seed), colnames(seeddf))]==1]
+  seeddata = subset(alldata, cells = seedcells)
+  
+  seeddata <- FindNeighbors(seeddata, dims = 1:30, k.param = 350, prune.SNN = 1/15)
+  seeddata <- FindClusters(seeddata, graph.name = paste0("RPCA_snn"),
+                            resolution = res, algorithm = 1)
+  
+  x = seddata@meta.data[,c("X","seurat_clusters")]
+  colnames(x) = c("Cell",paste0("cluster_",seed))
+  x
+})
+names(clusters) = gsub("seed","",colnames(seeddf))
+
+rm(seeddf)
+
+
+meta = combineclusters(default = "cluster_seed57362",
+                       clusters = clusters,
+                       meta = meta)
+
+if(rownames(meta) != colnames(alldata)){
+  meta = meta[colnames(alldata),]
+}
+
+alldata = AddMetaData(alldata, meta$RPCA_cluster,"RPCA_cluster")
+
+alldata = SetIdent(alldata, value = "RPCA_cluster")
+
+DefaultAssay(alldata) <- "RNA"
+
+rm(meta, clusters, getseedcells, combineclusters)
+
+```
+
+
+```{r}
+
+DimPlot(alldata, label = TRUE) + NoAxes() + NoLegend()
+
+```
+
+```{r, fig.height = 3}
+
+DotPlot(alldata, features = c("Epcam","Ptprc")) + coord_flip()
+
+```
+
+
+```{r}
+
+ggplot(alldata@meta.data, aes(fill = Type, x = RPCA_cluster)) + geom_bar(position = "fill")
+
+ggplot(alldata@meta.data, aes(fill = Model, x = RPCA_cluster)) + geom_bar(position = "fill")
+
+ggplot(alldata@meta.data, aes(fill = as.factor(RelTime), x = RPCA_cluster)) + 
+  geom_bar(position = "fill") + 
+  scale_fill_manual(values = colorRampPalette(
+    c("grey","blue"))(length(unique(alldata@meta.data$RelTime))))
+
+```
+
+
+```{r}
+
+VlnPlot(alldata, group.by = "RPCA_cluster", features = qc_feats, pt.size = 0.1, ncol = 2)
+VlnPlot(alldata, group.by = "RPCA_cluster", features = qc_feats, pt.size = 0, ncol = 2)
+
+```
+
+
+
+# Data cleaning
+
+```{r cleandata, cache = TRUE}
+
+immuneclusters = c(0,1,3,8,10,12,14,16,21)
+stromaclusters = c(4,7,9,11,13,15,17,18,20)
+epiclusters = c(2,5,6,19)
+
+sel.clust = "RPCA_cluster"
+
+alldata <- SetIdent(alldata, value = "Type")
+
+immunetype = WhichCells(alldata, ident = "Immune")
+stromatype = WhichCells(alldata, ident = "Stroma")
+epitype = WhichCells(alldata, ident = "Epithelial")
+
+alldata <- SetIdent(alldata, value = sel.clust)
+alldata$ident_clust = paste0(alldata@active.ident,"_",alldata$orig.ident)
+
+immunecells = WhichCells(alldata, ident = immuneclusters, cells = immunetype)
+stromacells = WhichCells(alldata, ident = stromaclusters, cells = stromatype)
+epicells = WhichCells(alldata, ident = epiclusters, cells = epitype)
+
+alldata = subset(alldata, cells = c(immunecells,stromacells, epicells))
+
+cleandata = alldata
+
+rm(alldata)
+
+immunedata = subset(cleandata, cells = immunecells)
+immunedata@active.assay = "RNA"
+immunedata[["RPCA"]] = NULL
+saveRDS(immunedata, "../data/SingleCell/TcellTransfer/R_objects/immune_data.rds")
+rm(immunedata)
+
+stromadata = subset(cleandata, cells = stromacells)
+stromadata@active.assay = "RNA"
+stromadata[["RPCA"]] = NULL
+saveRDS(stromadata, "../data/SingleCell/TcellTransfer/R_objects/stroma_data.rds")
+rm(stromadata)
+
+epidata = subset(cleandata, cells = epicells)
+epidata@active.assay = "RNA"
+epidata[["RPCA"]] = NULL
+saveRDS(epidata, "../data/SingleCell/TcellTransfer/R_objects/epithelial_data.rds")
+rm(epidata)
+
+cleandata <- ScaleData(cleandata)
+cleandata <- RunPCA(cleandata, npcs = 30)
+cleandata <- RunUMAP(cleandata, dims = 1:30)
+
+```
+
+
+```{r dimplots}
+
+plot_grid(ncol = 2, 
+          DimPlot(cleandata, reduction = "umap", group.by = "RPCA_cluster", 
+                  label = TRUE) + 
+            ggtitle("louvain_0.5") + NoLegend())
+
+```
+
+
+```{r}
+
+TypeClusters = list(Immune = immuneclusters, Stroma = stromaclusters, Epithelial = epiclusters)
+
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}
+
+color_list <- ggplotColours(n=length(unique(cleandata@active.ident)))
+names(color_list) = sort(as.numeric(as.character(unique(cleandata@active.ident))))
+
+DimPlot(cleandata, reduction = "umap", split.by = "Type", label = TRUE)+NoAxes()+NoLegend() +
+  scale_color_manual(values = color_list)
+
+DimPlot(cleandata, reduction = "umap", split.by = "Model", label = TRUE)+NoAxes()+NoLegend() +
+  scale_color_manual(values = color_list)
+
+```
+
+
+```{r}
+
+sampleorder = unique(cleandata$orig.ident[
+  order(cleandata$Model,cleandata$Treatment,cleandata$Time, 
+        decreasing = c(FALSE, TRUE, FALSE))])
+
+plot_grid(plotlist = lapply(unique(cleandata$Type), function(type){
+  typemeta = cleandata@meta.data[cleandata@meta.data$Type %in% type,]
+  typemeta$Treatment = factor(typemeta$Treatment, levels = c("untreated","aIL12"))
+  typemeta = typemeta[order(typemeta$Model,typemeta$Treatment,typemeta$Time),]
+  typemeta$orig.ident = factor(typemeta$orig.ident, levels = unique(typemeta$orig.ident))
+  typemeta$RPCA_cluster = factor(typemeta$RPCA_cluster, levels = 
+                                   sort(as.numeric(unique(typemeta$RPCA_cluster))))
+  ggplot(typemeta, aes(x = orig.ident, fill = RPCA_cluster)) +
+    geom_bar(position = "fill") + 
+    labs(fill = "Cluster") + 
+  scale_fill_manual(values = color_list[as.character(TypeClusters[[type]])]) + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), 
+          legend.key = element_blank(), 
+          legend.position = "bottom", panel.background = element_blank(),
+          panel.grid = element_blank())
+}), ncol = 3)
+
+```
+
+
+```{r umaps, fig.height = 9}
+
+source("stylesource.R")
+
+allplots = list(
+          DimPlot(cleandata, reduction = "umap", group.by = "Model", shuffle = TRUE) + NoAxes() + 
+             scale_color_manual(values = modelcolors),
+          FeaturePlot(cleandata, cells = sample(Cells(cleandata)),
+                      reduction = "umap", features = "RelTime") + 
+             NoAxes() + labs(title = "Time point") + timecolors,
+          DimPlot(cleandata, reduction = "umap", group.by = "Treatment", shuffle = TRUE) + NoAxes() +
+             scale_color_manual(values = treatmentcolors),
+          DimPlot(cleandata, reduction = "umap", group.by = "Type", shuffle = TRUE) +
+            NoAxes() + labs(title = "Sort fraction") +
+             scale_color_manual(values = typecolors))
+
+plot_grid(ncol = 2, plotlist = allplots)
+
+plot_grid(ncol = 2, plotlist = lapply(allplots, function(x){x + NoLegend()}))
+
+```
+
+
+# Session info
+
+```{r}
+
+sessionInfo()
+
+```

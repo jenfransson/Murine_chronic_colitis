@@ -1,0 +1,19 @@
+*library name;*title;*organism;**tissue;**cell line;**cell type;genotype;treatment;time;cage;RIN;lipocalin (ng/g);histological score
+DistC_6w_G3;Colon, WT W6, replicate 1;mus musculus;colon;;;BALB/c WT;;6w;G;8,8;0,592;
+DistC_6w_G4;Colon, WT W6, replicate 2;mus musculus;colon;;;BALB/c WT;;6w;G;9,2;NA;
+DistC_6w_G5;Colon, WT W6, replicate 3;mus musculus;colon;;;BALB/c WT;;6w;G;8,8;NA;
+DistC_6w_A2;Colon, Il10KO W6, replicate 1;mus musculus;colon;;;BALB/c Il10KO;;6w;A;8,8;4,72063;
+DistC_6w_B2;Colon, Il10KO W6, replicate 2;mus musculus;colon;;;BALB/c Il10KO;;6w;B;9;2,26715;
+DistC_6w_F7;Colon, Il10KO W6, replicate 3;mus musculus;colon;;;BALB/c Il10KO;;6w;F;8,9;2,31358;
+DistC_8w_B3;Colon, Il10KO W8, replicate 1;mus musculus;colon;;;BALB/c Il10KO;;8w;B;9,1;102,16194;
+DistC_8w_C2;Colon, Il10KO W8, replicate 2;mus musculus;colon;;;BALB/c Il10KO;;8w;C;8,4;135,52346;
+DistC_8w_D4;Colon, Il10KO W8, replicate 3;mus musculus;colon;;;BALB/c Il10KO;;8w;D;9,3;106,84909;
+DistC_10w_B4;Colon, Il10KO W10, replicate 1;mus musculus;colon;;;BALB/c Il10KO;;10w;B;8,5;554,27103;
+DistC_10w_C1;Colon, Il10KO W10, replicate 2;mus musculus;colon;;;BALB/c Il10KO;;10w;C;8,7;339,50897;
+DistC_10w_F6;Colon, Il10KO W10, replicate 3;mus musculus;colon;;;BALB/c Il10KO;;10w;F;9;363,72087;
+DistC_12w_A4;Colon, Il10KO W12, replicate 1;mus musculus;colon;;;BALB/c Il10KO;;12w;A;8,9;2574,23055;
+DistC_12w_B1;Colon, Il10KO W12, replicate 2;mus musculus;colon;;;BALB/c Il10KO;;12w;B;8,6;444,24416;
+DistC_12w_E3;Colon, Il10KO W12, replicate 3;mus musculus;colon;;;BALB/c Il10KO;;12w;E;8,8;1766,79478;
+DistC_14w_A3;Colon, Il10KO W14, replicate 1;mus musculus;colon;;;BALB/c Il10KO;;14w;A;9;2044,04194;
+DistC_14w_C3;Colon, Il10KO W14, replicate 2;mus musculus;colon;;;BALB/c Il10KO;;14w;C;6,5;3758,28851;
+DistC_14w_E4;Colon, Il10KO W14, replicate 3;mus musculus;colon;;;BALB/c Il10KO;;14w;E;5,8;4288,75508;

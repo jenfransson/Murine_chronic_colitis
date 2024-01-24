@@ -1,0 +1,65 @@
+﻿*library name;*title;*organism;**tissue;**cell line;**cell type;genotype;treatment;time;anti-IL-12p40
+G_W0_Epi;Colon, W0, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer;W0;no
+G_W0_Imm;Colon, W0, Immune fraction, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer;W0;no
+G_W0_Str;Colon, W0, Stroma fraction, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer;W0;no
+G_W1_Epi;Colon, W1, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer;W1;no
+G_W1_Imm;Colon, W1, Immune fraction, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer;W1;no
+G_W1_Str;Colon, W1, Stroma fraction, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer;W1;no
+G_W2_Epi;Colon, W2, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer;W2;no
+G_W2_Imm;Colon, W2, Immune fraction, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer;W2;no
+G_W2_Str;Colon, W2, Stroma fraction, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer;W2;no
+G_W3_Epi;Colon, W3, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer;W3;no
+G_W3_Epi_aIL12;Colon, W3, Epithelial fraction, anti-IL-12p40-treated, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer + anti-IL-12p40-treated;W3;yes
+G_W3_Imm;Colon, W3, Immune fraction, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer;W3;no
+G_W3_Str;Colon, W3, Stroma fraction, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer;W3;no
+G_W4_Epi;Colon, W4, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer;W4;no
+G_W4_Imm;Colon, W4, Immune fraction, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer;W4;no
+G_W4_Str;Colon, W4, Stroma fraction, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer;W4;no
+G_W5_Epi;Colon, W5, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer;W5;no
+G_W5_Epi_aIL12;Colon, W5, Epithelial fraction, anti-IL-12p40-treated, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer + anti-IL-12p40-treated;W5;yes
+G_W5_Imm;Colon, W5, Immune fraction, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer;W5;no
+G_W5_Str;Colon, W5, Stroma fraction, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer;W5;no
+G_W6_Epi;Colon, W6, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer;W6;no
+G_W6_Imm;Colon, W6, Immune fraction, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer;W6;no
+G_W6_Str;Colon, W6, Stroma fraction, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer;W6;no
+G_W7_Epi;Colon, W7, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer;W7;no
+G_W7_Epi_aIL12;Colon, W7, Epithelial fraction, anti-IL-12p40-treated, gene expression;mus musculus;colon;;Epithelial;BALB/c SCID;CD45RBhi transfer + anti-IL-12p40-treated;W7;yes
+G_W7_Imm;Colon, W7, Immune fraction, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer;W7;no
+G_W7_Imm_aIL12;Colon, W7, Immune fraction, anti-IL-12p40-treated, gene expression;mus musculus;colon;;Immune;BALB/c SCID;CD45RBhi transfer + anti-IL-12p40-treated;W7;yes
+G_W7_Str;Colon, W7, Stroma fraction, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer;W7;no
+G_W7_Str_aIL12;Colon, W7, Stroma fraction, anti-IL-12p40-treated, gene expression;mus musculus;colon;;Stroma;BALB/c SCID;CD45RBhi transfer + anti-IL-12p40-treated;W7;yes
+G_D0_E_ut;Colon, D0, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer;D0;no
+G_D0_I_ut;Colon, D0, Immune fraction, gene expression;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D0;no
+G_D0_S_ut;Colon, D0, Stroma fraction, gene expression;mus musculus;colon;;Stroma;Rag2 KO;CD45RBhi transfer;D0;no
+G_D10_E_ut;Colon, D10, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer;D10;no
+G_D10_I_ut;Colon, D10, Immune fraction, gene expression;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D10;no
+G_D10_S_ut;Colon, D10, Stroma fraction, gene expression;mus musculus;colon;;Stroma;Rag2 KO;CD45RBhi transfer;D10;no
+G_D20_E_ut;Colon, D20, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer;D20;no
+G_D20_I_ut;Colon, D20, Immune fraction, gene expression;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D20;no
+G_D20_S_ut;Colon, D20, Stroma fraction, gene expression;mus musculus;colon;;Stroma;Rag2 KO;CD45RBhi transfer;D20;no
+G_D30_E_il;Colon, D30, Epithelial fraction, anti-IL-12p40-treated, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer + anti-IL-12p40-treated;D30;yes
+G_D40_E_il;Colon, D40, Epithelial fraction, anti-IL-12p40-treated, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer + anti-IL-12p40-treated;D40;yes
+G_D40_E_ut;Colon, D40, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer;D40;no
+G_D40_I_ut;Colon, D40, Immune fraction, gene expression;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D40;no
+G_D50_E_ut;Colon, D50, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer;D50;no
+G_D50_I_ut;Colon, D50, Immune fraction, gene expression;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D50;no
+G_D50_S_ut;Colon, D50, Stroma fraction, gene expression;mus musculus;colon;;Stroma;Rag2 KO;CD45RBhi transfer;D50;no
+G_D60_E_il;Colon, D60, Epithelial fraction, anti-IL-12p40-treated, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer + anti-IL-12p40-treated;D60;yes
+G_D60_E_ut;Colon, D60, Epithelial fraction, gene expression;mus musculus;colon;;Epithelial;Rag2 KO;CD45RBhi transfer;D60;no
+G_D60_I_ut;Colon, D60, Immune fraction, gene expression;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D60;no
+G_D60_S_ut;Colon, D60, Stroma fraction, gene expression;mus musculus;colon;;Stroma;Rag2 KO;CD45RBhi transfer;D60;no
+P_D0_I_ut;Colon, D0, Immune fraction, Feature barcodes;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D0;no
+P_D10_I_ut;Colon, D10, Immune fraction, Feature barcodes;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D10;no
+P_D20_I_ut;Colon, D20, Immune fraction, Feature barcodes;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D20;no
+P_D40_I_ut;Colon, D40, Immune fraction, Feature barcodes;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D40;no
+P_D50_I_ut;Colon, D50, Immune fraction, Feature barcodes;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D50;no
+P_D60_I_ut;Colon, D60, Immune fraction, Feature barcodes;mus musculus;colon;;Immune;Rag2 KO;CD45RBhi transfer;D60;no
+P_W0_Imm;Colon, W0, Immune fraction, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer;W0;no
+P_W1_Imm;Colon, W1, Immune fraction, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer;W1;no
+P_W2_Imm;Colon, W2, Immune fraction, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer;W2;no
+P_W3_Imm;Colon, W3, Immune fraction, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer;W3;no
+P_W4_Imm;Colon, W4, Immune fraction, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer;W4;no
+P_W5_Imm;Colon, W5, Immune fraction, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer;W5;no
+P_W6_Imm;Colon, W6, Immune fraction, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer;W6;no
+P_W7_Imm;Colon, W7, Immune fraction, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer;W7;no
+P_W7_Imm_antiIL12;Colon, W7, Immune fraction, anti-IL-12p40-treated, Feature barcodes;;colon;;Immune;SCID;CD45RBhi transfer + anti-IL-12p40-treated;W7;yes

@@ -1,0 +1,1136 @@
+---
+title: "Analysis of bulk RNA seq in T cell transfer colitis (SCID background)"
+author: "Jennifer Fransson"
+editor_options:
+  chunk_output_type: inline
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  bookdown::html_document2:
+    code_folding: hide
+    toc: yes
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+params:
+  dataset: 1
+---
+
+```{r Setup, echo = FALSE}
+knitr::opts_chunk$set(results    = "hold",
+                      message    = FALSE,
+                      warning    = FALSE)
+
+if(!knitr::is_html_output()){
+  my_plot_hook <- function(x, options)
+   paste("\n", knitr::hook_plot_tex(x, options), "\n")
+  knitr::knit_hooks$set(plot = my_plot_hook)
+}
+```
+
+
+
+# Introduction
+
+This script describes the analyses performed to describe the disease process of T cell transfer colitis in SCID background mice for the study "The Spatiotemporal Transcriptomic Landscape in Murine Chronic Colitis". The data analyzed are bulk RNA-sequenced biopsies of distal colon. Samples were collected from mice at 8 time points (weeks 0-7). At three time points (weeks 3, 5 and 7), samples were also collected from mice that had been treated with anti-IL-12p40 starting at day 10. n = 3 mice per group.
+
+# Load libraries and other scripts
+
+In addition to the packages loaded, an extra script (bulk_functions.R) is sourced prior to analysis. This script contains functions and parameters for visualization that are used for this analysis as well as the analysis of Rag2KO and Il10KO bulk RNAseq.
+
+```{r}
+
+library(ggplot2)
+library(cowplot)
+library(grid)
+library(mgcv)
+library(rafalib)
+library(edgeR)
+library(reshape2)
+library(enrichR)
+library(ggvenn)
+library(data.table)
+library(ggpubr)
+library(progeny)
+library(pheatmap)
+
+
+source("../code/Bulk/bulk_functions.R")
+datadir = "../data/Bulk/TcellTransfer_SCID/"
+
+```
+
+# Read data files
+
+The gene expression matrices are available from GEO. In order to generate them, raw sequences were pseudo-aligned and quantified using kallisto. The generated abundance-files were renamed according to the samples and concatenated using the code below:
+
+```{r, eval = FALSE}
+
+rawdatadir = "../data/Bulk/TcellTransfer_SCID/kallisto/")
+
+### Generation of counts and TPM tables -
+####### Final files can be downloaded from GEO, but the code below describes
+####### how they were generated from the kallisto output files
+
+
+filenames <- list.files(rawdatadir,"R.*\\.tsv", full.names = TRUE)
+
+# Compile count and TPM tables from kallisto counts
+
+raw_counts <- sapply(filenames,function(x){
+  read.delim(x)[,"est_counts"] })
+
+colnames(raw_counts) <- sub(".*/","",sub(".tsv","",colnames(raw_counts)))
+rownames(raw_counts) <- read.delim(filenames[1])[,"target_id"]
+
+
+raw_tpm <- sapply(filenames,function(x){
+  read.delim(x)[,"tpm"] })
+colnames(raw_tpm) <- sub(".*/","",sub(".tsv","",colnames(raw_tpm)))
+rownames(raw_tpm) <- read.delim(paste0("../raw_data/",filenames[1]))[,"target_id"]
+
+
+# Load metadata and match to counts data
+
+metadata <- read.csv2(paste0(rawdatadir, "/raw_metadata.csv"), row.names = 1 )
+common <- rownames(metadata)[ rownames(metadata) %in% colnames(raw_counts)]
+
+metadata <- metadata[common, ]
+raw_counts <- round(raw_counts[,common],0)
+raw_tpm <- raw_tpm[,common]
+
+metadata$Sample = rownames(metadata)
+
+# Translate to gene names
+# Next, we can summarize ensembl transcript IDs to gene symbols for easier data interpretation. Here, we will download the GTF file from ensemble used for the annotation in the ammping step from Kallisto and annotate accordingly.
+
+gtf <- getgtf(datadir)
+
+annot <- gtf$gene_name [ match( sub("[.].*","",rownames(raw_counts)),gtf$transcript_id ) ]
+annot[is.na(annot)] <- "NA"
+
+counts <- rowsum(raw_counts , group = annot)
+counts <- counts[rownames(counts) != "NA",]
+
+tpm <- rowsum(raw_tpm , group = annot)
+tpm <- tpm[rownames(tpm) != "NA",]
+
+# Filter counts and TPM tables
+
+sel <- rowSums( counts > 10 ) >= 3
+
+filt_counts <- counts[sel,]
+filt_tpm <- tpm[sel,]
+
+# Save filtered tables
+
+write.table(filt_counts, paste0(datadir,"gene_counts.tsv"))
+write.table(filt_tpm, paste0(datadir,"gene_tpm.tsv"))
+
+####
+
+```
+
+Once the gene matrices have been created and saved (or downloaded), they can be loaded as follows without repeating the above code.
+
+```{r}
+
+filt_counts = read.table(paste0(datadir,"gene_counts.tsv"))
+filt_tpm = read.table(paste0(datadir,"gene_tpm.tsv"))
+metadata <- read.csv2(paste0(datadir,"metadata.csv"), row.names = 1 )
+filt_counts = filt_counts[,rownames(metadata)]
+
+```
+
+
+# Quality control
+
+Homogeneity in sample quality is assessed through number of counts, number of features and % ribosomal RNA. Integrity values (RIN) provided by Novogene UK (provider of cDNA library preparation and sequencing) have also been included. 
+
+```{r}
+
+metadata$nFeatures <- colSums(filt_counts>0)
+
+metadata$nCounts <- colSums(filt_counts)
+
+is_mito <- grepl("mt-",rownames(filt_counts))
+
+metadata$perc_mito <- colSums(filt_counts[is_mito,]) / colSums(filt_counts) * 100
+
+is_ribo <- grepl("Rp[ls]",rownames(filt_counts))
+
+metadata$perc_ribo <- colSums(filt_counts[is_ribo,]) / colSums(filt_counts) * 100
+
+```
+
+
+
+```{r, fig.height = 6, fig.width=4}
+
+x <- c("nFeatures","nCounts","perc_ribo","perc_mito","RIN")
+
+glist = list()
+for(i in x){
+  for(g in c("Week", "Cage")){
+    imean = aggregate(metadata[,i],by=list(metadata[,g]),mean)
+    imd = metadata
+    imd = imd[order(imd[,g]),]
+    imd$Sample = factor(imd$Sample, levels = imd$Sample)
+    imd$mean = imean$x[match(imd[,g], imean$Group.1)]
+    imeanx = aggregate(as.numeric(imd$Sample), by = list(imd[,g]), mean)
+    glist[[g]][[i]] = ggplot(imd, aes_string(y = i, x = "as.numeric(Sample)")) + 
+      geom_bar(aes_string(fill = g), stat = "identity", position = "dodge", show.legend = FALSE, alpha = 0.8) +
+      theme(panel.background = element_blank(),
+            axis.text.x = element_text(angle = 30, hjust = 1, size = 10),
+            axis.title.x = element_blank(),
+            axis.title.y = element_text(size = 10)) + 
+      geom_line(aes_string(y = "mean", group = g)) + 
+      scale_x_continuous(breaks = imeanx[,2], labels = imeanx[,1])
+  }
+  
+}
+plot_grid(textGrob("Week", hjust = 0.5, gp=gpar(fontsize=12)),
+          plot_grid(plotlist = glist[["Week"]], ncol = 1, align = "v"),ncol = 1, rel_heights = c(0.05,1))
+plot_grid(textGrob("Cage", hjust = 0.5, gp=gpar(fontsize=12)),
+          plot_grid(plotlist = glist[["Cage"]], ncol = 1, align = "v"),ncol = 1, rel_heights = c(0.05,1))
+
+
+```
+
+
+# Principal component analysis
+
+In order to visualize the overall variation between samples, we perform a principal component analysis (PCA) of all samples, using the top 500 most highly variable genes across samples. The relation between mean expression and standard deviation is shown below (each dot is one gene), indicating the 500 genes used for PCA in red.
+
+```{r, fig.height = 3, fig.width = 3}
+
+log_tpm <- log2(filt_tpm+1)
+log_sd <- apply(log_tpm,1,sd)
+log_means <- apply(log_tpm,1,mean)
+HVGs <- names(sort(log_sd,T))[1:500] # highly variable genes
+plot(log_means,log_sd,
+     col=ifelse(names(log_sd) %in% HVGs,"red","black" ),
+     cex=.5,pch=16)
+lines(smooth.spline(log_means,log_sd,spar = 1,nknots = 50),col="blue",lwd=3)
+
+```
+
+The PCA shows that >60% of the total variance between samples can be explained by PC1 (shown below).
+
+```{r, fig.height = 2, fig.width = 3}
+
+PC <- prcomp( t(log_tpm[HVGs,]) ,center = TRUE, scale. = T )
+PCvar <- PC$sdev^2 / sum(PC$sdev^2) * 100
+names(PCvar) <- 1:length(PCvar)
+pcdata <- cbind(PC$x, metadata)
+
+# Elbow plot
+ggplot(data.frame(variance = PCvar, PC = as.numeric(names(PCvar))), aes(x = PC, y = variance)) + 
+  geom_point() + geom_line() +
+  theme(panel.background = element_blank()) +
+  labs(y = "% Variance explained")
+
+```
+
+The first two components of the PCA are visualized below (left). Each point is one sample. The points are colored according to time points, and border color and shape indicate treatment (untreated or anti-IL-12p40-treated). The correlation between PC1 and histological score is also visualized (right). Points are colored according to lipocalin levels (log10(ng/g of feces)), and border color and shape indicate treatment.
+
+```{r, fig.height = 1.5, fig.width = 5}
+
+cor_histo = cor(pcdata$PC1, pcdata$HistologicalScore)^2
+cor_lcn = cor(pcdata$PC1, log10(pcdata$Lipocalin), use = "pairwise.co")^2
+
+
+g1 = ggplot(pcdata, aes(x = PC1,y = PC2) ) +
+  geom_point(size = pointsize, aes(shape = Treatment, fill = Week,
+                           color = Treatment), stroke = strokewidth) + 
+  
+  scale_fill_viridis_d(option = viridistype, direction = viridisdirection) + scale_shape_manual(values = treatmentshapes) + scale_color_manual(values = treatmentcolors) +
+   guides(fill = guide_legend(override.aes = list(shape = 22, color=NA) ) ) + plottheme
+
+g2<- ggplot(pcdata, aes(x = PC1,y = HistologicalScore)) + 
+  geom_point(aes(fill = log10(Lipocalin), shape = Treatment, color = Treatment),
+             size =pointsize, stroke = strokewidth) +
+  theme_classic() + theme(legend.position = "bottom") +
+  scale_shape_manual(values = treatmentshapes) + 
+  scale_color_manual(values = treatmentcolors) + plottheme + 
+  theme(axis.ticks.y = element_line(color = "black", linewidth = 0.25))
+
+plot_grid(g1 + theme(legend.position = "right",
+                     legend.key.size = unit(8,"pt")), 
+          g2 + theme(legend.position = "right",
+                     legend.key.size = unit(8,"pt"),
+                     axis.text.y = element_text(size = 8)) + 
+            labs(y = "Histological score"),
+          ncol = 2)
+
+```
+
+The genes that contribute the most (positively and negatively) to PC1 and PC2 are shown below, with loading to the PC indicated on the x-axis.
+
+```{r, fig.width = 4, fig.height = 2.5}
+
+up1 = sort(PC$rotation[,"PC1"], decreasing = TRUE)[1:20]
+down1 = sort(PC$rotation[,"PC1"], decreasing = FALSE)[1:20]
+
+up2 = sort(PC$rotation[,"PC2"], decreasing = TRUE)[1:20]
+down2 = sort(PC$rotation[,"PC2"], decreasing = FALSE)[1:20]
+
+ngenes = 20
+
+loadings1 = ggplot(data.frame(x = c(ngenes:1,ngenes:1), loading = c(up1[1:ngenes], down1[1:ngenes]),
+           gene = c(names(up1[1:ngenes]), names(down1[1:ngenes])),
+           dir = rep(c("up","down"),each = ngenes)),
+       aes(x = x, y = loading)) +
+  geom_bar(stat = "identity", aes(fill = dir)) + coord_flip() +
+  scale_fill_manual(values= c(up = "#FFBBBB", down = "#BBBBFF")) +
+  geom_text(aes(label = gene), hjust = rep(c(0,1),each = ngenes), size = 2) +
+  labs(title = "PC1") + ylim(-0.1,0.1) +
+  bartheme
+
+
+loadings2 = ggplot(data.frame(x = c(ngenes:1,ngenes:1), loading = c(up2[1:ngenes], down2[1:ngenes]),
+           gene = c(names(up2[1:ngenes]), names(down2[1:ngenes])),
+           dir = rep(c("up","down"),each = ngenes)),
+       aes(x = x, y = loading)) +
+  geom_bar(stat = "identity", aes(fill = dir)) + coord_flip() +
+  scale_fill_manual(values= c(up = "#FFBBBB", down = "#BBBBFF")) +
+  geom_text(aes(label = gene), hjust = rep(c(0,1),each = ngenes), size = 2) +
+  labs(title = "PC2") + ylim(-0.2,0.2) +
+  bartheme
+
+plot_grid(loadings1, loadings2, ncol = 2)
+
+```
+
+
+# Genes of interest
+
+The expression of certain genes of interest for the study are shown below. The gene names in _genes_ can be replaced with any gene present in the filtered dataset. Values are shown as log2(tpm+1). Untreated samples are shown in red squares, a-IL-12p40-treated samples are shown in blue circles.
+
+```{r, fig.height = 3.75, fig.width = 6}
+
+genes = c("Cd3g","Gzmk","Cd14", "Il1b","S100a9",
+          "Mcpt1","Xcl1","Klrc1",
+          "Il7r", "Icos","Nrgn","Xcr1","Siglech",
+          "Muc2", "Muc3","Chga")
+
+genedf = cbind(metadata, t(log_tpm[genes,]))
+
+genedf$Treatment = factor(genedf$Treatment, levels = c("Untreated","aIL12"))
+
+genedf$Week <- gsub("W","",genedf$Week)
+
+plottheme =   theme(legend.position = "none",
+        axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        panel.background = element_blank(),
+        panel.grid = element_blank())
+
+means = aggregate(genedf[,genes], by = list(genedf$Treatment, genedf$Week), mean)
+colnames(means)[1:2] = c("Treatment", "Week")
+
+ymaxes = c(1,2,5,10,20)
+ybreaks = list()
+ybreaks[[1]] = c(0,1)
+ybreaks[[2]] = c(0,1,2)
+ybreaks[[5]] = c(0,2,4)
+ybreaks[[10]] = c(0,3,6,9)
+ybreaks[[20]] = c(0,5,10,15)
+
+
+geneplots = lapply(genes, function(gene){
+  ymax = ymaxes[ymaxes>max(genedf[,gene])][1]
+  ggplot(genedf, aes_string(x = "Week", y = gene, color = "Treatment")) + 
+          #geom_smooth(aes(group = Treatment), alpha = 0)  + 
+          geom_line(data = means, aes(group = Treatment)) + 
+          geom_point(aes(shape = Treatment), alpha = 0.5) + 
+    labs(title = gene) + 
+  #                   position = position_jitter(width = 0.2)) + 
+          plottheme + 
+    scale_y_continuous(breaks = ybreaks[[ymax]]) + 
+    theme(axis.ticks.x = element_blank(), 
+          axis.title = element_blank(),
+          plot.title = element_text(size = 10, hjust = 0.5)) + 
+          scale_shape_manual(values = c(15,16)) +
+          coord_cartesian(ylim=c(0,NA))
+})
+
+
+plot_grid(plotlist = geneplots, ncol = 6)
+
+```
+
+# Differential expression analysis
+
+Differentially expressed genes are identified using edgeR linear modeling between all groups. By defining the timepoint & treatment as one factor, each experimental group is considered as an independent variable in the model.
+
+```{r}
+
+# Fixing factors for correct design
+metadata$Week = factor(metadata$Week)
+metadata$Treatment = factor(metadata$Treatment, levels = c("Untreated","aIL12"))
+metadata$WT = paste(metadata$Week, metadata$Treatment, sep="_")
+metadata$WT = factor(metadata$WT, 
+                     levels = paste(rep(sort(unique(metadata$Week)),
+                                        rep(2,length(unique(metadata$Week)))),
+                                    rep(c("Untreated","aIL12"),
+                                        length(unique(metadata$Week))), sep="_"))
+
+metadata$WT = factor(metadata$WT, 
+                     levels = levels(metadata$WT)[levels(metadata$WT) %in% 
+                                                    metadata$WT])
+
+```
+
+```{r}
+
+# Creating the linear model and dataset
+y <- DGEList(counts=filt_counts,group=metadata$WT)
+keep <- filterByExpr(y)
+y <- y[keep,,keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+
+design <- model.matrix(~metadata$WT)
+
+y <- estimateDisp(y,design)
+
+# Fitting the data to the model
+
+fit <- glmQLFit(y,design)
+
+```
+
+Three tests are performed to identify differentially expressed genes.
+
+1. LRT between all untreated time points
+2. LRT between all time point + treatment groups
+3. QLF test between a-IL-12p40-treated mice and untreated mice at week 7
+
+The results of test 1 is used to define the modules of similarly regulated genes across times. The results of test 2 and 3 are used in the section about anti-IL-12p40 treatment.
+
+```{r}
+
+
+weeklrt_fromall = glmLRT(fit,coef = grep("Untreated", colnames(fit)))
+
+WeekLRT <- weeklrt_fromall$table
+WeekLRT <- WeekLRT[ order(WeekLRT$PValue) , ]
+WeekLRT$FDR <- p.adjust(WeekLRT$PValue,"BH")
+
+allgrouplrt = glmLRT(fit,coef = 2:ncol(fit))
+
+allgrouplrt_res <- allgrouplrt$table
+allgrouplrt_res <- allgrouplrt_res[ order(allgrouplrt_res$PValue) , ]
+allgrouplrt_res$FDR <- p.adjust(allgrouplrt_res$PValue,"BH")
+
+w7ilvsut = glmQLFTest(fit, contrast  = c(0,0,0,0,0,0,0,0,0,-1,1))
+
+w7ilvsut_res <- w7ilvsut$table
+w7ilvsut_res <- w7ilvsut_res[ order(w7ilvsut_res$PValue) , ]
+w7ilvsut_res$FDR <- p.adjust(w7ilvsut_res$PValue,"BH")
+
+```
+
+## Modules of differentially expressed genes over time in T cell transfer colitis
+
+The results table from test 1 defined above (LRT comparing untreated groups at all time points) is used to define the differentially expressed genes across time. All genes with FDR < 0.01 are included in the analysis. LogFC values are smoothed and normalized to max = 1 and min = 0 for each gene. Hierarchical clustering is performed between genes using these values. The dendrogram is cut to create clusters of co-regulated genes ("modules"). The height at which to cut is selected in order to create cohesive modules with minimal redundancy.
+
+```{r}
+
+# Add the Week 0 baseline (0) to the table
+WeekLRT$logFC.metadata.WTW0_Untreated = 0 
+
+# Rename the columns in order to adhere to format logFC.WX
+colnames(WeekLRT) = gsub("_Untreated","",colnames(WeekLRT))
+colnames(WeekLRT) = gsub("metadata.WT","",colnames(WeekLRT))
+
+# Create a table containing only the logFCs for each time point, and only of the genes with FDR<0.01
+logFCs = WeekLRT[WeekLRT$FDR<0.01,grepl("logFC",colnames(WeekLRT))]
+logFCs = logFCs[,c(ncol(logFCs),1:(ncol(logFCs)-1))]
+
+```
+
+
+```{r}
+
+# Create a numeric variable representing the week of each column in logFCs
+Weeks = as.numeric(gsub("logFC.W","",colnames(logFCs)))
+
+# Use smooth.spline to smooth the expression across time for all DE genes
+s_logFCs <- t(apply(logFCs,1,function(x){
+                x <- smooth.spline(Weeks,x,spar = .4)$y} ))
+
+colnames(s_logFCs) = colnames(logFCs)
+
+# Normalize gene expression to min = 0 and max = 1
+s_logFCs0 = t(apply(s_logFCs,1,function(x){x-min(x)}))
+s_logFCs01 = t(apply(s_logFCs0,1,function(x){x/max(x)}))
+
+# Perform hierarchical clustering of DE genes
+geneDistance <- as.dist((1-cor(t(s_logFCs01)))/2)
+geneCluster = hclust(geneDistance,method="ward.D2")
+
+```
+
+```{r}
+
+# Choose a height at which to cut the dendrogram of clustered genes
+height_cut <- 2.5
+
+# Cut the dendrogram
+groups <- cutree(geneCluster,h=height_cut)
+
+
+# Reorder the cluster in order of kinetics
+genes = names(groups)
+groups = match(groups, c(5,2,4,1,7,3,6))
+names(groups) = genes
+
+TCTcolors = gg_color_hue(max(groups))
+names(TCTcolors) = 1:length(TCTcolors)
+
+```
+
+```{r}
+
+myplclust(geneCluster, labels=rep("-", length(groups)),
+          lab.col = TCTcolors[groups])
+abline( h=height_cut, col="red", lwd=0.5)
+
+```
+
+The numbers of genes per module are shown here:
+
+```{r}
+
+knitr::kable(table(groups), 
+             col.names = c("Module","No of genes"), 
+             align = "c")
+
+```
+
+For each module, the logFC over time is shown for each gene in the module (black lines). The average logFC at each time point is shown with the colored line.
+
+```{r}
+
+linelist = list()
+
+for(i in sort(unique(groups))){
+  clusters_logFCs01 = as.data.frame(s_logFCs01[groups==i,])
+  clusters_logFCs01$Gene = rownames(clusters_logFCs01)
+  clf01long = melt(clusters_logFCs01)
+  clf01long$Week = as.numeric(gsub("logFC.W","",clf01long$variable))
+  linelist[[i]] = ggplot(clf01long, aes(x = Week, y = value)) + 
+    geom_line(aes(group = Gene), alpha = 0.4) +  
+    labs(title = paste("Module",i)) + 
+    stat_summary(geom="line", color = TCTcolors[i], 
+                 size = 2, fun = mean) + 
+    scale_x_continuous(breaks = 0:7) +
+    theme(plot.title = element_text(size = 10),
+          axis.text = element_text(size = 8),
+          axis.title = element_text(size = 8))
+}
+
+cowplot::plot_grid(plotlist = linelist)
+
+```
+
+To verify that the smoothing of the values did not dramatically skew the expression patterns, the changes of the non-smoothed logFC values are also shown below.
+
+```{r}
+
+# Normalized non-smoothed logFCs to min = 0 and max = 1
+logFCs0 = t(apply(logFCs,1,function(x){x-min(x)}))
+logFCs01 = t(apply(logFCs0,1,function(x){x/max(x)}))
+
+nslinelist = list()
+
+for(i in sort(unique(groups))){
+  
+  clusters_logFCs01 = as.data.frame(logFCs01[groups==i,])
+  clusters_logFCs01$Gene = rownames(clusters_logFCs01)
+  clf01long = melt(clusters_logFCs01)
+  clf01long$Week = as.numeric(gsub("logFC.W","",clf01long$variable))
+  nslinelist[[i]] = ggplot(clf01long, aes(x = Week, y = value)) + 
+    geom_line(aes(group = Gene), alpha = 0.4) + 
+    stat_summary(geom="line",  color = TCTcolors[i], 
+                 size = 2, fun = mean) + 
+    labs(title = paste("Module",i)) + 
+    scale_x_continuous(breaks = 0:7) +
+    theme(plot.title = element_text(size = 10),
+          axis.text = element_text(size = 8),
+          axis.title = element_text(size = 8))
+}
+
+plot_grid(plotlist = nslinelist)
+
+```
+
+### Over-representation analysis
+
+For each module, the list of included genes is analyzed to identify over-represented GO biological process terms and KEGG pathways using Enrichr. The results are shown in the summaries below.
+
+```{r, results=FALSE}
+
+GOBP = list()
+KEGG = list()
+
+for(i in 1:max(groups)){
+  enres = enrichr(genes = names(groups[groups==i]),
+                  databases =c("GO_Biological_Process_2021",
+                               "KEGG_2019_Mouse"))
+  GOBP[[i]] = enres[[1]]
+  KEGG[[i]] = enres[[2]]
+}
+
+```
+
+
+
+```{r, fig.height = 5.5, fig.width = 4.5}
+
+axis_size = 8
+
+gobplist = lapply(sort(unique(groups)),function(i){
+  x = GOBP[[i]]
+  sig = x[x$Adjusted.P.value<0.05 & as.numeric(gsub("/.*","",x$Overlap))>=4,c("Term","Overlap","Adjusted.P.value","Genes")]
+  if(nrow(sig) == 0){
+    return(NULL)
+  }else{
+  if(nrow(sig)>5){sig = sig[1:3,]}
+  sig$Term = gsub("\\(GO.*","",sig$Term)
+  sig$Term = gsub("positive","pos",gsub("negative","neg",gsub("regulation","reg",sig$Term)))
+  sig$Term = factor(sig$Term, levels = rev(sig$Term))
+  return(ggplot(sig, aes(x = -log10(Adjusted.P.value), y = Term)) + 
+           geom_bar(stat="identity", fill = "#DDDDDD") + 
+           labs(title = paste("Module",i)) + 
+           geom_text(x = 50, aes(label = Term), vjust = 0.5,
+                     hjust = 0, size = 3) +
+           theme(axis.text.y = element_blank(),
+                 axis.title.y = element_blank(),
+                 axis.ticks.y = element_blank()) + 
+           theme(panel.background = element_blank(),
+                 plot.title = element_blank()) + 
+           scale_x_continuous(n.breaks = 3, limits = c(0,50), 
+         expand = expansion(mult = c(0,0.1), add = 0)) + 
+           scale_y_discrete(expand = expansion(mult = 0, add = 0)) + 
+           coord_cartesian(clip = "off"))
+  }
+  })
+
+
+```
+
+
+```{r}
+
+KEGGlist = lapply(sort(unique(groups)),function(i){
+  x = KEGG[[i]]
+  sig = x[x$Adjusted.P.value<0.05 & as.numeric(gsub("/.*","",x$Overlap))>=4,c("Term","Overlap","Adjusted.P.value","Genes")]
+  if(nrow(sig) == 0){
+    return(NULL)
+  }else{
+    if(nrow(sig)>5){sig = sig[1:3,]}
+    sig$Term = gsub("\\(GO.*","",sig$Term)
+    sig$Term = gsub("positive","pos",gsub("negative","neg",gsub("regulation","reg",sig$Term)))
+    sig$Term = factor(sig$Term, levels = rev(sig$Term))
+    return(ggplot(sig, aes(x = -log10(Adjusted.P.value), y = Term)) + 
+             geom_bar(stat="identity", fill = "#DDDDDD") + 
+             labs(title = paste("Module",i)) + 
+             geom_text(x = 30, aes(label = Term), size = 3,
+                       vjust = 0.5, hjust = 0) +
+             theme(axis.text.y = element_blank(),
+                   axis.title.y = element_blank(),
+                   axis.ticks.y = element_blank()) + 
+             theme(panel.background = element_blank(),
+                   plot.title = element_blank()) + 
+             scale_x_continuous(n.breaks = 3, limits = c(0,25), 
+           expand = expansion(mult = c(0,0.1), add = 0)) + 
+             scale_y_discrete(expand = expansion(mult = 0, add = 0)) + 
+             coord_cartesian(clip = "off"))
+    }
+  })
+
+```
+
+```{r}
+
+
+
+heatmapdf = melt(s_logFCs01[order(groups),])
+colnames(heatmapdf) = c("Gene","Week","logFC")
+heatmapdf$Week = gsub("logFC.W","",heatmapdf$Week)
+heatmapdf$Gene = factor(heatmapdf$Gene, #levels = ylevels) 
+                        rev(rownames(s_logFCs01)[order(groups)]))
+heatmapdf$Module = factor(groups[as.character(heatmapdf$Gene)])
+
+
+ggheatmap = ggplot(heatmapdf, aes(y = Gene, x = Week)) + 
+  geom_tile(aes(fill = logFC)) +
+            theme(panel.background = element_blank(), axis.text.y = element_blank(),
+                  axis.title.y = element_blank(), axis.ticks.y = element_blank(),
+                 axis.text.x = element_text(size = axis_size)) + 
+            scale_fill_gradient2(low = "#00BFC4", mid ="white",
+                                 high = "#F8766D", midpoint = 0.5) + 
+  labs(fill = "Expression") +
+  scale_y_discrete(expand = expansion(mult = 0, add = 0)) +
+  scale_x_discrete(expand = expansion(mult = 0, add = 0)) +
+  theme(legend.position = "bottom")
+
+freqs = rev(table(heatmapdf[heatmapdf$Week=="0","Module"])/nrow(heatmapdf[heatmapdf$Week=="0",]))
+
+modulehm = ggplot(heatmapdf[heatmapdf$Week=="0",]) + 
+  geom_bar(mapping = aes(fill = Module, x = Week), position ="fill") +
+  theme(panel.background = element_blank(), 
+                  axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank()) +
+            labs(x = "Module") + 
+            scale_x_discrete(labels = c(""), 
+                             expand = expansion(mult = 0, add = 0)) + 
+            scale_y_continuous(expand = expansion(mult = 0, add = 0)) + 
+  geom_text(data = as.data.frame(cumsum(freqs) - freqs/2), size = 2.7,
+                      aes(y = Freq, label = Var1), x = 1)
+
+```
+
+### Summaries
+
+Below, summaries are shown for the defined modules. The summary includes a heatmap showing the smoothed and normalized logFC values, line plots showing the average expression in each module, and bar plots showing the top over-represented GO terms (first figure) and KEGG pathways (second figure).
+
+
+
+```{r, fig.height = 5, fig.width = 8}
+
+col_widths = c(1.5,1,0.5,2.5,0.5,2.5)
+
+heatmapblock = plot_grid(
+        plot_grid(
+          modulehm + theme(legend.position = "none",
+                   axis.text.x = element_blank(),
+                   axis.ticks.x = element_blank(),
+                   axis.title.x = element_blank()) , 
+          
+          ggheatmap + theme(legend.position = "none",
+                          axis.text.x = element_blank(),
+                   axis.title.x = element_blank(),
+                   axis.ticks.x = element_blank()) ,
+          
+          NULL,
+          
+          ggdraw(get_x_axis(ggheatmap, position = "bottom")) ,
+          
+          ncol = 2, rel_widths = c(1,4),nrow = 2, 
+          rel_heights = c(20,1), align = "v"),
+         textGrob("Week",gp = gpar(fontsize = 8), hjust = 0.25), ncol = 1, 
+          rel_heights = c(41,1)
+        )
+
+lineblock = plot_grid(
+        plot_grid(plotlist = c(lapply(linelist, function(x){
+          x$layers[[1]]$aes_params$size = 0.1
+          x$layers[[2]]$aes_params$size = 0.5
+          x + theme(panel.background = element_blank(),
+                    panel.grid = element_blank(),
+                    axis.title = element_blank(),
+                    plot.title = element_blank(),
+                    axis.text = element_blank(),
+                    axis.ticks = element_blank()) +
+            scale_y_continuous(expand = expansion(mult = 0, add = 0) ) +
+            scale_x_continuous(expand = expansion(mult = 0, add = 0) ) 
+          }),
+          
+          list(ggdraw(get_x_axis(linelist[[1]] +
+            scale_y_continuous(expand = expansion(mult = 0, add = 0) ) +
+            scale_x_continuous(expand = expansion(mult = 0, add = 0),
+                               breaks = 0:7) + 
+              theme(axis.text = element_text(size = axis_size)))))), 
+          ncol = 1, 
+          rel_heights = c(rep(20/length(linelist),length(linelist)),1), 
+          align = "v"),
+        textGrob("Week",gp = gpar(fontsize = 8)),
+        ncol = 1, 
+          rel_heights = c(41,1)
+      )
+
+KEGGblock = plot_grid(plotlist = c(lapply(KEGGlist, function(x){
+          x + theme(panel.background = element_blank(), 
+                    panel.grid = element_blank(),
+                    axis.title = element_blank(), axis.text = element_blank(),
+                    axis.ticks = element_blank())
+          }),
+          list(ggdraw(get_x_axis(KEGGlist[[1]] + 
+                                   theme(axis.text = 
+                                           element_text(size = axis_size)))))),
+          ncol = 1, 
+          rel_heights = c(rep(20/length(KEGGlist),length(KEGGlist)),1),
+          align = "v")
+
+GOBPblock = plot_grid(plotlist = c(lapply(gobplist, function(x){
+          x + theme(panel.background = element_blank(), 
+                    panel.grid = element_blank(),
+                    axis.title = element_blank(), axis.text = element_blank(),
+                    axis.ticks = element_blank())
+          }),
+          list(ggdraw(get_x_axis(gobplist[[1]] + 
+                                   theme(axis.text = 
+                                           element_text(size = axis_size)))))),
+          ncol = 1, 
+          rel_heights = c(rep(20/length(gobplist),length(gobplist)),1),
+          align = "v")
+
+
+
+  plot_grid(
+    plot_grid(textGrob("logFCs",gp = gpar(fontsize = 10), hjust = 0.25),
+              textGrob("Average logFCs",gp = gpar(fontsize = 10), hjust = 0.5),
+              textGrob("Top GO BP terms",gp = gpar(fontsize = 10), hjust = 0),
+              NULL,
+              textGrob("Top KEGG pathways",gp = gpar(fontsize = 10), hjust = 0),
+              NULL,
+              ncol = 6, rel_widths = col_widths),
+    plot_grid(
+      heatmapblock,
+      
+      lineblock,
+      
+      plot_grid(GOBPblock,
+        textGrob("log10(p-value)",gp = gpar(fontsize = 8), hjust = 0.25), 
+        ncol = 1, 
+        rel_heights = c(41,1)
+      ),
+      NULL,
+      plot_grid(KEGGblock,
+        textGrob("log10(p-value)",gp = gpar(fontsize = 8), hjust = 0.25), 
+        ncol = 1, 
+        rel_heights = c(41,1)
+      ),
+      NULL,
+      ncol = 6, rel_widths = col_widths), 
+    
+    plot_grid(get_legend(ggheatmap + 
+                           theme(legend.key.height = unit(10,"points"),
+                                 legend.key.width = unit(15,"points"),
+                                 legend.title = element_text(size = 8),
+                                 legend.text = element_text(size = 8))),
+              ncol = 2, rel_width = c(2,1)), 
+    nrow = 3, rel_heights = c(0.5,10,1)
+    )
+
+
+```
+
+## Anti-IL-12p40 analysis
+
+In order to evaluate the effect of anti-IL-12p40 treatment on bulk transcriptomics, we use tests 2 and 3 defined above. First, we normalize the logFC values of each gene for the treated groups as for the untreated groups, by subtracting the minimum value of the untreated groups and dividing by the maximum value of the untreated groups. Then we visualize the average logFCs for each module together with the averages of the untreated groups. Due to the smaller number of treated groups, no smoothing is performed on the logFC values.
+
+```{r}
+
+TCTmodules = as.data.frame(s_logFCs01)
+TCTmodules$cluster = groups[rownames(TCTmodules)]
+
+TCTorder = sort(unique(TCTmodules$cluster))
+
+allgrouplrt_res = allgrouplrt_res[rownames(TCTmodules)[!is.na(TCTmodules$cluster)],]
+
+colnames(allgrouplrt_res) = gsub("metadata.WT","",colnames(allgrouplrt_res))
+allgrouplrt_res$logFC.W0_Untreated = 0
+
+all_logFCs = allgrouplrt_res[,grep("logFC",colnames(allgrouplrt_res))]
+weekcols = grep("Untreated",colnames(all_logFCs))
+
+all_logFCs01 = as.data.frame(t(apply(all_logFCs, 1, function(x){
+  min_x = min(x[weekcols])
+  max_x = max(x[weekcols]-min_x)
+  (x - min_x)/max_x})))
+
+groups = TCTmodules[rownames(all_logFCs01),"cluster"]
+names(groups) = rownames(all_logFCs01)
+
+samplegroup = gsub("logFC.","",colnames(all_logFCs))
+treatment = gsub(".*_", "", samplegroup)
+week = gsub("_.*", "", samplegroup)
+
+
+w7ilvsut_res$module = TCTmodules[rownames(w7ilvsut_res), "cluster"]
+
+```
+
+
+```{r, fig.height = 2.8, fig.width=3.2}
+
+grouplinelist = list()
+for(i in 1:max(groups, na.rm = TRUE)){
+  clusw7 = w7ilvsut_res[w7ilvsut_res$module %in% i,]
+  
+  
+  clusterLogFCs01 = as.data.frame(all_logFCs01[rownames(all_logFCs01) %in% names(groups)[groups==i],])
+  clusterLogFCs01$Gene = rownames(clusterLogFCs01)
+  clf01long = melt(clusterLogFCs01)
+  clf01long$Week = as.numeric(gsub("logFC.W","",gsub("_.*","",clf01long$variable)))
+  clf01long$Treatment = factor(gsub(".*_","",clf01long$variable), 
+                                  levels = c("Untreated","aIL12"))
+  clf01long$WT = paste0(clf01long$Week,clf01long$Treatment)
+  grouplinelist[[i]] = ggplot(clf01long, aes(x = Week, y = value, color = Treatment)) + 
+    geom_vline(xintercept = 0) + 
+    geom_hline(yintercept = 0) + 
+    stat_summary(geom="line", size = 1, fun = mean, aes(group = Treatment)) + 
+    scale_x_continuous(expand = expansion(0), breaks = c(0,7)) +
+    linetheme_aIL12 + 
+    annotate("text", x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("sm",i),
+             size = 3) + 
+    scale_y_continuous(expand = expansion(0), breaks = c(0,1), limits = c(0,1))
+}
+
+plot_grid(plotlist = c(grouplinelist,
+                       list(get_legend(grouplinelist[[1]] + 
+                                         theme(legend.position = "right")))),
+          ncol = 3)
+
+
+```
+
+The results of test 3 above are used to identify genes that are differentially expressed between treated and untreated samples at week 7. The distribution of DEGs among the modules is shown below.
+
+```{r, fig.width=6, fig.height = 2}
+
+w7ilvsut_res$reg = c("down","up")[(w7ilvsut_res$logFC>0)+1]
+w7ilvsut_res$reg[w7ilvsut_res$FDR>0.01]  = "ns"
+w7ilvsut_res$reg = factor(w7ilvsut_res$reg, levels = c("up","down","ns"))
+
+gcount = ggplot(w7ilvsut_res[!is.na(w7ilvsut_res$module),], aes(x = factor(module))) + 
+  geom_bar(aes(fill = reg)) + 
+  scale_fill_manual(values = c(up = "#FFAAAA", down = "#AAAAFF", ns = "#EEEEEE")) + 
+  linetheme_human + 
+  theme(plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "right",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 8)) + 
+  labs(x = "SCID module")
+
+w7ilvsut_res$reg = factor(w7ilvsut_res$reg, levels = levels(w7ilvsut_res$reg))
+gprop = ggplot(w7ilvsut_res[!is.na(w7ilvsut_res$module),], aes(x = factor(module))) + 
+  geom_bar(aes(fill = reg), position = "fill") +
+  scale_fill_manual(values = c(up = "#FFAAAA", down = "#AAAAFF", ns = "#EEEEEE")) +
+  labs(y = "Proportion") + linetheme_human + 
+  theme(legend.position = "right",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 8)
+        )+ 
+  labs(x = "SCID module")
+
+plot_grid(textGrob("anti-IL-12p40 samples vs untreated samples DEGs at final time point",
+                   gp = gpar(fontsize = 10)
+                   ),
+          plot_grid(gcount, gprop, ncol = 2), ncol = 1, rel_heights = c(1,10))
+
+```
+
+To evaluate whether early increased genes (module 1) includes fewer anti-IL-12p40 DEGs than later increased genes (modules 2 and 3), we perform a chi-square test on the distribution.
+
+```{r}
+
+TCTmodules123 = w7ilvsut_res[w7ilvsut_res$module %in% c(1,2,3),]
+
+ilchi123 = chisq.test(table(TCTmodules123$module, TCTmodules123$reg!="ns"))
+
+exp = as.data.frame(ilchi123$expected)
+obs = as.data.frame.matrix(ilchi123$observed)
+exp$Module = rownames(exp)
+obs$Module = rownames(obs)
+exp = exp[,c("Module","TRUE","FALSE")]
+obs = obs[,c("Module","TRUE","FALSE")]
+
+```
+
+Observed distribution between modules 1-3 and differential expression between treatment groups at final time point: 
+
+```{r}
+knitr::kable(obs, col.names = c("Module","DE in aIL12", "Not DE in aIL12"))
+```
+
+Expected distribution between modules 1-3 and differential expression between treatment groups at final time point:
+
+```{r}
+knitr::kable(exp, col.names = c("Module","DE in aIL12", "Not DE in aIL12"))
+```
+
+p-value for chi-square test of observed values: `r ilchi123$p.value`
+
+## Progeny
+
+```{r}
+
+presult = progeny(expr = as.matrix(log2(filt_tpm+1)), organism = "Mouse")
+
+pheatmap(presult)
+
+presult_long = melt(presult, varnames = c("Sample","Pathway"), value.name = "score")
+presult_long$Week = as.numeric(
+  substr(metadata[match(presult_long$Sample, 
+                        rownames(metadata)),"Week"],2,20))
+presult_long$Treatment = metadata[match(presult_long$Sample,
+                                        rownames(metadata)),"Treatment"]
+presult_long$HistologicalScore = metadata[match(presult_long$Sample,
+                                        rownames(metadata)),"HistologicalScore"]
+
+```
+
+
+```{r, fig.height = 4.5, fig.width=1.6}
+
+plot_grid(plotlist = lapply(c("JAK-STAT","NFkB","TNFa"),
+                            function(i){
+  ggplot(presult_long[presult_long$Pathway == i,],
+         aes(x = HistologicalScore, y = score))+
+    scale_shape_manual(values = c(15,16)) +
+    labs(title = i, y = "PROGENy score") + plottheme + 
+    geom_smooth(data = presult_long[presult_long$Pathway == i & presult_long$Treatment == "Untreated",], 
+    #geom_smooth(
+      method = "gam", formula = y ~ s(x, k = 4),
+    #  method = "loess", span = 2,
+    #  formula = "y ~ x",
+    color = "#F8766D", 
+    #color = "black",
+    linetype = 2,
+    linewidth = 0.5) + 
+    geom_jitter(aes(color = Treatment, shape = Treatment), 
+                width = 0.05)
+}), ncol = 1)
+
+```
+
+# Comparison with human datasets
+
+To evaluate the translational relevance of the transcriptional changes in mouse, we utilize data from two studies:
+
+1. A list of DEGs between treatment-naïve UC patient and non-IBD control colon biopsies from [Taman et al, 2018](https://doi.org/10.1093/ecco-jcc/jjx139).
+
+2. Counts from rectal and colon biopsies from UC and CD patients and non-IBD controls from [Lloyd-Price et al, 2019](https://doi.org/10.1038/s41586-019-1237-9). The counts are used to generate DEGs between UC vs controls and CD vs controls.
+
+The mouse homologs of these genes are extracted from the [MGI homolog database](https://www.informatics.jax.org/). The genes are then compared to the mouse DEGs defined above. The number of overlapping genes are shown in the Venn diagram below. Genes that are DE in mouse and both UC comparisons are considered "UC conserved" whereas genes that are DE in all four comparisons are considered "IBD conserved".
+
+```{r}
+
+if(!file.exists(paste0(datadir,"/human_DE.csv"))){
+  
+  homologs <- fread('http://www.informatics.jax.org/downloads/reports/HMD_HumanPhenotype.rpt')
+  homologs <- data.frame("mouse"=homologs$V3, "human"=homologs$V1)
+  
+  TCT_human = homologs[match(rownames(TCTmodules), homologs$mouse),]
+  TCT_human = TCT_human[!is.na(TCT_human$mouse),]
+  
+  TCT_human$cluster = TCTmodules$cluster[match(TCT_human$mouse, rownames(TCTmodules))]
+  
+  DE_DF = getHumanDEs(TCT_human, homologs)
+  
+  write.csv2(DE_DF, paste0(datadir,"Human_DE.csv"))
+}else{
+  DE_DF = read.csv2(paste0(datadir,"Human_DE.csv"))
+}
+
+```
+
+
+```{r}
+
+gv = ggvenn(list(Taman_UC = unique(DE_DF$mouse[!is.na(DE_DF$Taman_UC_reg)]),
+            Lloyd_UC= unique(DE_DF$mouse[!is.na(DE_DF$Lloyd_UC_reg)]),
+            CD= unique(DE_DF$mouse[!is.na(DE_DF$Lloyd_CD_reg)]),
+            SCID = unique(DE_DF$mouse[!is.na(DE_DF$TCTmodule)])),
+       show_percentage = FALSE)
+
+gv$coordinates$clip = "off"
+
+gv
+
+```
+
+
+```{r}
+
+# Label genes regulated in both UC datasets and in UC+CD
+
+DE_DF$UCup = DE_DF$Taman_UC_reg %in% "up" & DE_DF$Lloyd_UC_reg %in% "up"
+DE_DF$UCdown = DE_DF$Taman_UC_reg %in% "down" & DE_DF$Lloyd_UC_reg %in% "down"
+DE_DF$IBDup = DE_DF$Taman_UC_reg %in% "up" & DE_DF$Lloyd_UC_reg %in% "up" & 
+                DE_DF$Lloyd_CD_reg %in% "up"
+DE_DF$IBDdown = DE_DF$Taman_UC_reg %in% "down" & DE_DF$Lloyd_UC_reg %in% "down" & 
+                  DE_DF$Lloyd_CD_reg %in% "down"
+DE_DF$UC = factor(c("down",NA,"up")[DE_DF$UCdown*-1 + DE_DF$UCup + 2], levels = c(NA,"up","down"))
+DE_DF$IBD = factor(c("down",NA,"up")[DE_DF$IBDdown*-1 + DE_DF$IBDup + 2], levels = c(NA,"up","down"))
+
+```
+
+```{r}
+
+message("loading KEGG")
+
+# Load kegg and gene ontology information for over-representation analysis
+
+kegg_pathways = loadKEGGGeneSets(
+  filepath_kegg = paste0(datadir,"../mouseKEGG.rds"))
+
+universe = rownames(log_tpm)
+
+```
+
+
+## Conserved UC genes
+
+
+For each group of conserved genes, the number and regulation of the genes in human are shown per mouse module.
+
+```{r, fig.height = 2.5}
+
+plot_grid(ggplot(DE_DF[apply(DE_DF[,c("UC","TCTmodule")], 1, function(x){all(!is.na(x))}),], 
+                 aes(x = TCTmodule)) + geom_bar(aes(fill = as.factor(UC)))  + 
+  labs(title = "UC conserved genes", fill = "UC regulation", x = "SCID module") +
+    bartheme_human + scale_x_continuous(breaks = TCTorder) + 
+    theme(axis.text.y = element_text(size = 8)),
+  ggplot(DE_DF[apply(DE_DF[,c("UC","TCTmodule")], 1, function(x){all(!is.na(x))}),], 
+         aes(x = TCTmodule)) + geom_bar(aes(fill = as.factor(UC)), position = "fill")  + 
+  labs(title = "UC conserved genes", fill = "UC regulation", x = "SCID module", y = "Proportion") +
+    bartheme_human + scale_x_continuous(breaks = TCTorder) + 
+    theme(axis.text.y = element_text(size = 8)),
+ncol = 2)
+
+```
+
+The distributions of p-values in mouse DEGs for conserved and non-conserved genes are shown below.
+
+```{r, fig.height=2, fig.width=3}
+
+
+DE_DF$TCT_FDR = WeekLRT$FDR[match(DE_DF$mouse, rownames(WeekLRT))]
+
+plottext = element_text(size = 8)
+plottheme = theme(axis.text = plottext,
+                  axis.title = plottext)
+
+
+plot_grid(
+ggplot(DE_DF[!is.na(DE_DF$TCTmodule),], aes(x = !is.na(UC), y = -log10(TCT_FDR))) +
+  stat_compare_means(method = "wilcox", label = "p.signif", 
+                     comparisons = list(c("TRUE","FALSE"))) + 
+  plottheme + scale_y_continuous(expand = expansion(mult = c(0,0.1))) + 
+  geom_point(position = "jitter", size = 0.1, alpha =0.3, shape = 16)  +
+  geom_boxplot(outlier.size = -1, alpha = 0.5, color = "#7F79B7")
+,
+ggplot(DE_DF[!is.na(DE_DF$TCTmodule),], aes(x = !is.na(IBD), y = -log10(TCT_FDR))) + 
+  stat_compare_means(method = "wilcox", label = "p.signif", 
+                     comparisons = list(c("TRUE","FALSE"))) + 
+  plottheme + scale_y_continuous(expand = expansion(mult = c(0,0.1))) + 
+  geom_point(position = "jitter", size = 0.1, alpha =0.3, shape = 16)  +
+  geom_boxplot(outlier.size = -1, alpha = 0.5, color = "#7F79B7")
+
+)
+
+```
+
+
+```{r}
+
+sessionInfo()
+
+```
