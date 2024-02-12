@@ -362,7 +362,7 @@ combinemeta = function(metalist,commoncns,commondata){
 
 
 
-getHumanDEs <- function(TCT_human, homologs){
+getHumanDEs <- function(mouse_human, homologs){
   
   library(openxlsx)
   library(data.table)
@@ -451,9 +451,9 @@ getHumanDEs <- function(TCT_human, homologs){
   Lloyd_CD_mouse$logFC = de_CDvsCtrl_res_sig[match(Lloyd_CD_mouse$human,rownames(de_CDvsCtrl_res_sig)),"logFC"]
   
   DE_DF = unique(rbind(Lloyd_CD_mouse[,c(1,2)],Lloyd_UC_mouse[,c(1,2)], 
-                       Taman_UC_mouse[,c(1,2)], TCT_human[,c(1,2)]))
+                       Taman_UC_mouse[,c(1,2)], mouse_human[,c(1,2)]))
   
-  DE_DF$TCTmodule = TCT_human[match(DE_DF$mouse, TCT_human$mouse),"cluster"]
+  DE_DF$mousemodule = mouse_human[match(DE_DF$mouse, mouse_human$mouse),"cluster"]
   
   DE_DF$Taman_UC_logFC = Taman_UC_mouse[match(DE_DF$human, Taman_UC_mouse$human), "logFC"]
   DE_DF$Lloyd_UC_logFC = Lloyd_UC_mouse[match(DE_DF$human, Lloyd_UC_mouse$human),"logFC"]

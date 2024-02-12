@@ -1,0 +1,772 @@
+---
+title: "Il10KO single cell analysis (Stroma)"
+editor_options:
+  chunk_output_type: inline
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  bookdown::html_document2:
+    code_folding: hide
+    toc: yes
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+params:
+  dataset: 1
+---
+
+```{r Setup, echo = FALSE}
+knitr::opts_chunk$set(fig.width  = 7,
+                      results    = "hold",
+                      message    = FALSE,
+                      cache.lazy = FALSE,
+                      warning    = FALSE)
+
+
+```
+
+
+
+
+```{r setup}
+ 
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+library(clustree)
+
+
+source("../code/SingleCell/color_list.R")
+source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
+
+```
+
+
+```{r}
+ 
+datadir = "../data/SingleCell/Il10KO/R_objects/"
+
+owncache = "../data/SingleCell/Il10KO/cache_stroma/"
+
+violintheme = theme(axis.text = element_text(size = 8),
+        plot.title = element_text(size = 8),
+        legend.key.size = unit(8, "pt"),
+        axis.title = element_blank())
+dimtheme = theme(legend.text = element_text(size = 8),
+        plot.title = element_text(size = 8),
+        legend.key.size = unit(8, "pt"))
+
+qc_feats <- c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo")
+
+```
+
+```{r, include = FALSE}
+
+if(file.exists(owncache)){
+  message(paste0("Intermediate data files will be loaded from and saved to ",owncache))
+}else{
+  message("Intermediate data files will not be saved or loaded")
+}
+
+```
+
+# Initial data 
+
+Due to a large heterogeneity of cell quality in the week 10 sample, a filtering step is added to remove cells with < 2000 unique genes expressed in this sample. 
+
+```{r}
+
+if(!file.exists(paste0(owncache,"first_dr.RData"))){
+  alldata = readRDS(paste0(datadir,"stroma_data.rds"))
+
+  alldata = subset(alldata,
+                   cells = WhichCells(alldata, 
+                                      expression = nFeature_RNA>2000 | 
+                                        orig.ident != "G_10W_STR"))
+  
+  
+  suppressWarnings(suppressMessages(alldata <- FindVariableFeatures(alldata, selection.method = "vst", 
+    nfeatures = 2000, verbose = FALSE, assay = "RNA")))
+
+  
+  alldata <- ScaleData(alldata, vars.to.regress = c("percent_mito", "nFeature_RNA"), 
+    assay = "RNA")
+
+  alldata <- RunPCA(alldata, npcs = 50, verbose = F)
+  
+  alldata <- RunUMAP(alldata, reduction = "pca", dims = 1:30, n.components = 2, n.neighbors = 30, 
+    n.epochs = 200, min.dist = 0.3, learning.rate = 1, spread = 1)
+  if(file.exists(owncache)){
+    save(alldata, file = paste0(owncache,"first_dr.RData"))
+  }
+}else{
+  load(paste0(owncache,"first_dr.RData"))
+}
+
+```
+
+# Plot QC vars
+
+Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
+
+```{r qc, fig.height=4, fig.width=6}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
+  violintheme
+
+```
+
+# Find variable genes
+
+```{r topgenes, fig.height = 3, fig.width = 5}
+
+top20 <- head(VariableFeatures(alldata), 20)
+lp = LabelPoints(plot = VariableFeaturePlot(alldata), points = top20, repel = TRUE) +
+  theme(axis.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        axis.text = element_text(size = 8))
+
+lp$layers[[2]]$aes_params$size = 3
+
+lp
+
+```
+
+# PCA
+
+```{r, fig.height = 3, fig.width = 6}
+
+
+plot_grid(ncol = 3, 
+          DimPlot(alldata, reduction = "pca", group.by = "orig.ident", 
+                  dims = 1:2, shuffle = TRUE) +
+            NoLegend() + NoAxes() + dimtheme,
+          DimPlot(alldata, reduction = "pca", group.by = "orig.ident", 
+                  dims = 3:4, shuffle = TRUE) + 
+            NoLegend() + NoAxes() + dimtheme,
+          DimPlot(alldata, reduction = "pca", group.by = "orig.ident",
+                  dims = 5:6, shuffle = TRUE) + 
+            NoLegend() + NoAxes() + dimtheme)
+
+```
+
+```{r, fig.height = 3, fig.width = 6}
+
+VizDimLoadings(alldata, dims = 1:5, reduction = "pca", ncol = 5, balanced = T) &
+  theme(axis.text = element_text(size = 8), axis.title = element_text(size = 8))
+
+```
+
+```{r, fig.height = 2, fig.width = 4}
+
+ElbowPlot(alldata, reduction = "pca", ndims = 50) + 
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8))
+
+```
+
+# UMAP
+
+```{r firstumap, fig.height = 3, fig.width = 6}
+
+plot_grid(ncol = 2, DimPlot(alldata, reduction = "pca", raster = TRUE,
+                            group.by = "orig.ident", shuffle = TRUE) + 
+            NoLegend() + NoAxes() + dimtheme, 
+    DimPlot(alldata, reduction = "umap", group.by = "orig.ident", raster = TRUE,
+            shuffle = TRUE) +
+      NoLegend() + NoAxes() + dimtheme)
+
+plot_grid(ncol = 2, DimPlot(alldata, reduction = "umap", raster = TRUE,
+                            group.by = "orig.ident", shuffle = TRUE) +
+            theme(legend.position = "bottom") + NoAxes() + dimtheme, 
+          DimPlot(alldata, reduction = "umap", raster = TRUE,
+                  group.by = "Genotype", shuffle = TRUE) +
+            theme(legend.position = "bottom") + NoAxes() + dimtheme)
+
+plot_grid(ncol = 2, DimPlot(alldata, reduction = "umap", raster = TRUE,
+                  group.by = "RPCA_cluster", label = TRUE, shuffle = TRUE) + 
+            NoLegend() + NoAxes() + dimtheme)
+
+FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), raster = TRUE,
+    order = T, slot = "data", combine = T) & dimtheme & NoAxes() & NoLegend()
+
+```
+
+# Integration
+
+```{r}
+
+if(!file.exists(paste0(owncache,"integration.RData"))){
+  if(!file.exists(paste0(owncache,"anchors.RData"))){
+    alldata <- SplitObject(alldata, split.by = "orig.ident")
+  
+    gc()
+    
+    for(i in 1:length(alldata)){
+      alldata[[i]] = NormalizeData(alldata[[i]])
+      alldata[[i]] <- FindVariableFeatures(alldata[[i]], selection.method = "vst",
+            nfeatures = 2000)
+    }
+    
+    data.anchors <- FindIntegrationAnchors(
+      object.list = alldata, dims = 1:30, 
+        reduction = "cca")
+    rm(alldata)
+    gc()
+    
+    if(file.exists(owncache)){
+      save(data.anchors, file = paste0(owncache,"anchors.RData"))
+    }
+  }else{
+    rm(alldata)
+    gc()
+    load(paste0(owncache,"anchors.RData"))
+  }
+  
+  alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30,
+                                    new.assay.name = "CCA")
+  
+  rm(data.anchors)
+  gc()
+  
+  alldata <- ScaleData(alldata)
+  alldata <- RunPCA(alldata, npcs = 30)
+  alldata <- RunUMAP(alldata, dims = 1:30, n.neighbors = 50)
+  
+  if(file.exists(owncache)){
+    save(alldata, file = paste0(owncache,"integration.RData"))
+  }
+}else{
+  load(paste0(owncache,"integration.RData"))
+}
+
+```
+
+```{r, fig.height = 3, fig.width=6}
+
+plot_grid(ncol = 2,
+  
+  DimPlot(alldata, reduction = "pca", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
+    NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
+  DimPlot(alldata, reduction = "umap", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
+    NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme
+)
+
+alldata@active.assay = "RNA"
+FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), 
+    order = T, slot = "data", combine = T) & dimtheme & NoAxes()
+alldata@active.assay = "CCA"
+
+```
+
+
+```{r, fig.height = 6, fig.width=4}
+
+FeaturePlot(alldata, reduction = "umap", 
+            features = c("percent_mito","percent_ribo","S.Score",
+                         "G2M.Score", "nFeature_RNA"), 
+    order = T, slot = "data", combine = T, ncol = 2) &
+  NoAxes() & NoLegend() & dimtheme
+
+```
+
+```{r}
+
+if(!file.exists(paste0(owncache, "clustered.RData"))){
+  alldata@active.assay <- "CCA"
+  
+  alldata@active.assay
+
+  alldata <- FindNeighbors(alldata, dims = 1:30, k.param = 350, prune.SNN = 1/15)
+  names(alldata@graphs)
+  
+  # Clustering with louvain (algorithm 1)
+  for (res in c(0.25, 0.5, 1, 1.5)) {
+      alldata <- FindClusters(alldata, graph.name = "CCA_snn",
+                              resolution = res, algorithm = 1)
+  }
+  if(file.exists(owncache)){
+    save(alldata, file = paste0(owncache, "clustered.RData"))
+  }
+}else{
+  load(paste0(owncache, "clustered.RData"))
+}
+
+```
+
+
+```{r dimplots, fig.height=6, fig.width = 6}
+
+plot_grid(ncol = 2, 
+          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.0.25",
+                  label = TRUE) + dimtheme + NoLegend() + NoAxes() + 
+            ggtitle("louvain_0.25"),
+          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.0.5", 
+                  label = TRUE) + dimtheme +  NoLegend() + NoAxes() + 
+            ggtitle("louvain_0.5"),
+          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.1", 
+                  label = TRUE) + dimtheme + NoLegend() + NoAxes() + 
+            ggtitle("louvain_1"), 
+          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.1.5", 
+                  label = TRUE) + dimtheme + NoLegend() + NoAxes() + 
+            ggtitle("louvain_1.5"))
+
+
+```
+
+```{r clustreeplot}
+
+clustree(alldata@meta.data, prefix = "CCA_snn_res.")
+
+
+```
+
+```{r}
+
+clusternames = 
+  data.frame(Cluster = c(0:13),
+             Clustername = c("FiB Igfbp3","FiB Has1","MyoC",
+                             "Trophocytes","Telocytes","FiB Igfbp6",
+                             "Endothelial","Pericytes","ICC",
+                             "MyoC Id4","Neurons","VSMC",
+                             "Immune","ImmunoFiB"))
+
+
+clusterorder = c("FiB Has1","FiB Igfbp3","FiB Igfbp6","ImmunoFiB",
+                 "Trophocytes","Telocytes","MyoC","MyoC Id4","Endothelial",
+                 "Pericytes","VSMC","Neurons","ICC","Immune")
+
+
+alldata = AddMetaData(alldata, 
+                      factor(clusternames$Clustername[
+                        match(alldata$CCA_snn_res.0.5,clusternames$Cluster)], 
+                        levels = clusterorder),
+                      "NamedCluster")
+
+alldata = SetIdent(alldata, value = "NamedCluster")
+
+color_list = get_color_list(14)
+names(color_list) = clusterorder
+
+```
+
+```{r, fig.height = 4, fig.width = 4}
+
+dp = DimPlot(alldata, label = TRUE, shuffle = TRUE) + 
+  NoAxes() + NoLegend() + dimtheme + scale_color_manual(values = color_list)
+
+dp$layers[[2]]$aes_params$size = 3
+
+dp
+
+```
+
+```{r, fig.width = 6, fig.height = 8}
+
+VlnPlot(alldata, features = c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo", 
+                              "S.Score", "G2M.Score"), 
+    ncol = 2, pt.size = 0) & scale_fill_manual(values = color_list) & violintheme
+
+```
+
+
+```{r,  fig.height = 3, fig.width=2}
+
+if(!file.exists(paste0(owncache, "clustermarkers.rds"))){
+
+  markers_genes <- FindAllMarkers(alldata, logfc.threshold = 0.2, test.use = "wilcox", 
+  min.pct = 0.1, min.diff.pct = 0.2, only.pos = TRUE, max.cells.per.ident = 1000, 
+  assay = "RNA", random.seed = 42)
+  
+  if(file.exists(owncache)){
+    saveRDS(markers_genes, paste0(owncache, "clustermarkers.rds"))
+  }
+}else{
+  
+  markers_genes = readRDS(paste0(owncache, "clustermarkers.rds"))
+  
+}
+
+top25 <- markers_genes %>% group_by(cluster) %>% top_n(-25, p_val)
+
+out = lapply(unique(top25$cluster), function(i){
+  markersdata = top25[top25$cluster==i,]
+  markersdata$gene = factor(markersdata$gene, levels = rev(markersdata$gene))
+  print(ggplot(markersdata, aes(x = avg_log2FC, y = gene)) + 
+          labs(title = i) + 
+    geom_bar(stat = "identity") + 
+    theme(axis.title.y = element_blank(),
+          axis.title.x = element_text(size = 8),
+          plot.title = element_text(size = 8),
+          axis.text = element_text(size = 8)))
+  
+    # barplot(sort(setNames(top25$avg_log2FC, top25$gene)[top25$cluster == i], F), horiz = T, 
+    #     las = 1, main = paste0(i, " vs. rest"), border = "white", yaxs = "i")
+    # abline(v = c(0, 0.2), lty = c(1, 2))
+})
+
+```
+
+```{r}
+
+markergenes = 
+  c("Cd34","Col1a1","Grem1","Has1","Pdpn","Igfbp3","Adamdec1",
+    "Col6a5","Wnt4","Igfbp6","Gas1","Clu","Ccl19","Cxcl13",
+    "Pdgfra","Ptn","Fibin","Wnt5a","Bmp5","Foxl1","Myh11","Acta2",
+    "Myl9","Hhip","Actc1","Id4","Plvap","Cdh5","Cd81","Cxcl12",
+    "Rgs5","Pdgfrb","Pln","Ccl21a","Lyve1","Prox1","Nog","Pcp4",
+    "Nrtn","Kit","Etv1","Ano1","Ptprc")
+
+```
+
+
+
+
+```{r, fig.height = 6, fig.width = 4}
+
+dot = DotPlot(alldata, features=rev(markergenes), assay = "RNA")
+dot = dot + aes(x = id, y = features.plot) + scale_x_discrete(position = "top") + 
+  labs(y = "Genes",x = "Clusters") + 
+  scale_size(range = c(0.5,2.5), breaks = c(0,50,100), limits = c(0,100)) +
+  theme(legend.position = "none", legend.title = element_blank(),
+        axis.text.x = element_text(size = 8, angle = -45, hjust = 1),
+        axis.text.y = element_text(size = 8, face = "italic"),
+        legend.key.width = unit(0.3, "cm"), 
+        legend.key.height = unit(0.3,"cm"), 
+        legend.text = element_text(size = 8),
+        axis.title = element_text(size = 8))
+dot$scales$scales[[1]]$limits = c(-1.8,2.7)
+
+plot_grid(dot,get_legend(dot + theme(legend.position = "right")),
+          rel_widths = c(5,1))
+
+```
+
+
+```{r}
+
+
+freqs = table(alldata$orig.ident, alldata$NamedCluster)
+
+df = as.data.frame(apply(freqs,1,function(x){x/sum(x)}))
+df$Cluster = rownames(df)
+
+fulldf = melt(df)
+fulldf$variable = as.numeric(fulldf$variable)
+
+fulldf = fulldf[!is.nan(fulldf$value),]
+
+
+```
+
+
+
+```{r}
+
+
+frequencies = merge(melt(table(data.frame(cluster=alldata$NamedCluster,
+                 sample = alldata$orig.ident)), value.name = "Freq"),
+                 melt(apply(table(data.frame(cluster=alldata$NamedCluster,
+                                             sample = alldata$orig.ident)),2,
+                            function(x){x/sum(x)}), value.name = "Proportion"))
+
+frequencies$time = as.numeric(gsub("W","",alldata$Week[match(frequencies$sample, alldata$orig.ident)]))
+frequencies$genotype = factor(alldata$Genotype[match(frequencies$sample, alldata$orig.ident)],
+                              levels = c("WT","Il10KO"))
+
+frequencies = frequencies[order(frequencies$cluster),]
+
+cumulFreq = frequencies
+cumulFreq$cumulProp = NA
+for(i in unique(cumulFreq$sample)){
+  cumulFreq$cumulProp[cumulFreq$sample %in% i] = rev(cumsum(rev(cumulFreq$Proportion[cumulFreq$sample %in% i])))
+}
+cumulFreq = rbind(cumulFreq,cumulFreq)
+cumulFreq$xadj = rep(c(-1,1), c(nrow(frequencies),nrow(frequencies)))
+
+
+```
+
+# Ordered by increase over time
+
+
+```{r, fig.height = 7}
+
+corlist = lapply(unique(frequencies$cluster), function(i){
+  clufreq = frequencies[frequencies$cluster==i  & 
+                        frequencies$genotype == "Il10KO",]
+
+  clucor =  cor(clufreq$Proportion,as.numeric((clufreq$time)))
+  clucor
+  })
+names(corlist) = unique(frequencies$cluster)
+
+averagecor = unlist(corlist)
+
+frequencies$cluster = 
+  factor(frequencies$cluster, 
+         levels = names(averagecor)[order(unlist(averagecor), decreasing = TRUE)])
+cumulFreq$cluster = 
+  factor(cumulFreq$cluster,
+         levels = names(averagecor)[order(unlist(averagecor), decreasing = TRUE)])
+
+frequencies$sample = factor(frequencies$sample, 
+                          levels = 
+                            unique(frequencies$sample[order(frequencies$genotype,
+                                                   frequencies$time)]))
+frequencies$samplenumber = as.numeric(frequencies$sample)
+
+
+cumulFreq$sample = factor(cumulFreq$sample, 
+                          levels = 
+                            levels(frequencies$sample))
+cumulFreq$samplenumber = as.numeric(cumulFreq$sample)
+
+
+```
+
+
+```{r, fig.height = 3.5, fig.width = 3.5}
+
+
+datasets = lapply(unique(frequencies$genotype), function(bg){
+  bgfreq = frequencies[frequencies$genotype == bg,]
+  
+  cumbgfr = cumulFreq[paste(cumulFreq$sample,
+                                   cumulFreq$oldtime) %in% 
+                               paste(bgfreq$sample,
+                                     bgfreq$oldtime),]
+  list(bgfreq, cumbgfr)
+})
+
+
+barplot = ggplot(data = frequencies, 
+       aes(x = samplenumber, y = Proportion, fill = cluster)) + 
+  theme(panel.background = element_blank(), axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+            scale_fill_manual(values =
+                                color_list[as.character(unique(sort(frequencies$cluster)))]) + 
+            scale_x_continuous(breaks = sort(unique(frequencies$samplenumber)),
+                               labels = 
+                                 gsub("BALBc","WT",
+                                      gsub("_IMM","",
+                                           gsub("G_","", 
+                                                gsub("IL10_","",
+                                                     levels(frequencies$sample))))))
+
+for(ds in datasets){
+  barplot = barplot + 
+    geom_area(data = ds[[2]],
+              alpha = 0.7, linewidth = 0.3, stat = 'identity',
+              aes(fill = cluster, group = cluster,
+                  y = Proportion, x = samplenumber + xadj*0.3))
+}
+
+barplot + geom_bar(stat = "identity", width = 0.6, color = "black") + 
+  theme(legend.key.size = unit(8,"pt"))
+
+
+```
+
+# Subset analyses
+
+
+```{r}
+
+alldata = AddMetaData(alldata, alldata$NamedCluster, "fibroblasts")
+
+alldata$fibroblasts[!(alldata$fibroblasts %in% 
+                  c("FiB Has1","FiB Igfbp3","FiB Igfbp6","ImmunoFiB",
+                 "Trophocytes","Telocytes"))] = NA
+
+
+```
+
+```{r, fig.height = 3, fig.width = 3}
+
+plot_grid(plotlist = lapply(c("fibroblasts"),
+       function(x){
+         dp = DimPlot(alldata, group.by = x, label = TRUE) +
+            scale_color_manual(values = color_list, na.value = "#CACACA") +
+            dimtheme & NoLegend() & NoAxes()
+         dp$layers[[2]]$aes_params$size = 3
+         dp
+       }))
+
+```
+
+```{r}
+
+fibroblasts = subset(alldata, cells = WhichCells(alldata, expression = fibroblasts %in% alldata$NamedCluster))
+
+rm(alldata)
+gc()
+
+```
+
+
+## Fibroblasts
+
+
+
+```{r}
+
+ntop = 40
+downsample_n = 1000
+txt = element_text(size = 8)
+
+```
+
+
+```{r}
+
+fibroblasts@active.assay <- "RNA"
+
+
+fibroblasts <- FindVariableFeatures(fibroblasts)
+fibroblasts <- ScaleData(fibroblasts, features = VariableFeatures(fibroblasts))
+
+fibroblasts <- RunNMF(object = fibroblasts, assay = "RNA", nfactors = ntop,
+              n.cores = 1)
+ 
+
+for(i in 1:ntop){
+  fibroblasts <- AddMetaData(fibroblasts, fibroblasts@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+                     paste0("nmf_",i))
+}
+
+fibroblasts$Week = as.numeric(gsub("W","",fibroblasts$Week))
+
+fibroblasts = AddMetaData(fibroblasts, factor(paste(fibroblasts$Genotype, fibroblasts$Week),
+                              levels = c("WT 6", 
+                                         paste0("Il10KO ", 
+                                               c(6,8,10,12,14)))), 
+                  "G_W")
+
+```
+
+```{r}
+
+pvaluelist = getfactorpvalues_Il10(fibroblasts, downsample_n, ntop)
+modelpvalues = pvaluelist$modelpvalues
+rank_modelpvalues = pvaluelist$rank_modelpvalues
+rm(pvaluelist)
+
+
+pvaluegg = melt(modelpvalues, variable.name = "factor",
+                value.name =  "p.value")
+pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
+
+
+fibroblasts_values = fibroblasts@meta.data[,grep("^nmf_", colnames(fibroblasts@meta.data))]
+
+fibroblasts_scaled = apply(fibroblasts_values, 2, scale)
+
+fibroblasts_scaled_means_id = aggregate(fibroblasts_scaled, by = list(fibroblasts$G_W), mean)
+fibroblasts_means_id = aggregate(fibroblasts_values, by = list(fibroblasts$G_W), mean)
+fibroblasts_means_scaled_id = as.data.frame(apply(fibroblasts_means_id[,-1], 2, scale))
+fibroblasts_means_scaled_id$Group.1 = fibroblasts_means_id$Group.1
+
+fibroblasts_scaled_means_cluster = aggregate(fibroblasts_scaled, by = list(fibroblasts$NamedCluster), mean)
+fibroblasts_means_cluster = aggregate(fibroblasts_values, by = list(fibroblasts$NamedCluster), mean)
+if(nrow(fibroblasts_means_cluster)==1){
+  fibroblasts_means_scaled_cluster = as.data.frame(rbind(apply(fibroblasts_means_cluster[,-1], 2, scale)))
+  fibroblasts_means_scaled_cluster$Group.1 = fibroblasts_means_cluster$Group.1
+  fibroblasts_means_scaled_cluster[1,is.nan(as.numeric(fibroblasts_means_scaled_cluster[1,]))] = 0
+}else{
+  fibroblasts_means_scaled_cluster = as.data.frame(apply(fibroblasts_means_cluster[,-1], 2, scale))
+  fibroblasts_means_scaled_cluster$Group.1 = fibroblasts_means_cluster$Group.1
+}
+
+```
+
+```{r, fig.show="hide"}
+
+ph_sample = pheatmap(fibroblasts_means_scaled_id[,paste0("nmf_", 1:ntop)])
+
+ph_order = ph_sample$tree_col$order
+
+```
+
+```{r, fig.width = 2.5, fig.height = 6}
+
+my_dotp = ggplot(melt(fibroblasts_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + 
+  geom_vline(color = "white", xintercept = 1.5) +
+  scale_fill_viridis_c() + 
+  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt,
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_size_continuous(limits = c(0,100), range= c(0,3))
+
+my_dotp_cl = ggplot(melt(fibroblasts_means_scaled_cluster), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + scale_fill_viridis_c() +
+  theme_classic() +
+  theme(axis.text = txt,
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.title = element_blank(),
+        legend.text = txt,
+        axis.text.y = element_blank(),
+        legend.key.size = unit(8,"pt"),
+        plot.title = element_blank(),
+        legend.position = "bottom",
+        legend.title = txt) + 
+  scale_size_continuous(limits = c(0,100))
+
+lmp = ggplot(pvaluegg,
+       aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
+  geom_tile(aes(fill = -log10(p.value))) + 
+  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
+  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        legend.title = element_text(size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
+
+scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
+               max(my_dotp$data$value, my_dotp_cl$data$value))
+
+plot_grid(my_dotp + 
+            scale_fill_viridis_c(limits = scalerange) + 
+            theme(axis.title = element_blank(),
+                  legend.position = "bottom",
+                      legend.key.size = unit(8,"pt")),
+          my_dotp_cl + 
+            scale_fill_viridis_c(limits = scalerange),
+          lmp + 
+            labs(fill = ""), 
+          align = "h", ncol = 3, rel_widths = c(3.5,2.7,1)
+          )
+
+```
+
+```{r, fig.height = 2, fig.width = 4}
+
+showfactors_Il10(fibroblasts)
+
+```
+
+
+# Session info
+
+```{r}
+
+sessionInfo()
+
+```

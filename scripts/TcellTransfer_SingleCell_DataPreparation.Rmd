@@ -35,9 +35,9 @@ library(DoubletFinder)
 library(clustree)
 
 library(future)
-n_workers = 20
-plan("multisession", workers = n_workers)
-options(future.globals.maxSize = 1000 * 1024^3)
+n_workers = 10
+plan("multisession", workers = n_workers, gc = TRUE)
+options(future.globals.maxSize = 100 * 1024^3)
 #options(future.globals.maxSize = 10 * 1024^3)
 library(future.apply)
 
@@ -46,17 +46,37 @@ datadir = "../data/SingleCell/TcellTransfer/expression_matrices"
 owncache = "../data/SingleCell/TcellTransfer/cache/"
 
 violintheme = theme(axis.text = element_text(size = 8),
-        plot.title = element_text(size = 10),
+        plot.title = element_text(size = 8),
+        legend.key.size = unit(8, "pt"),
         axis.title = element_blank())
+dimtheme = theme(legend.text = element_text(size = 8),
+        plot.title = element_text(size = 8),
+        legend.key.size = unit(8, "pt"))
+
+metadata = read.csv2(paste0(datadir,"/../metadata.csv"))
+sampleorder = metadata[substr(metadata[,1],1,1)=="G",1]
+
+qc_feats <- c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo")
 
 ```
 
+```{r, include = FALSE}
+
+if(file.exists(owncache)){
+  message(paste0("Intermediate data files will be loaded from and saved to ",owncache))
+}else{
+  message("Intermediate data files will not be saved or loaded")
+}
+
+```
 
 # Load data
 
 ```{r loading_matrices}
 
 if(!file.exists(paste0(owncache,"/loading_matrices.RData"))){
+
+plan("multisession", workers = 16, gc = TRUE)
 
 loadObject = function(d){
   sample = sub("\\.h5","",sub(".*/","",d))
@@ -83,20 +103,32 @@ system.time(
 names(all_matrices) = sub("\\.h5","",sub(".*/","",datafiles))
 gc()})
 
-alldata = merge(x = all_matrices[[1]],
-                y = all_matrices[-1],
-                add.cell.ids = names(all_matrices))
+alldata = merge(x = all_matrices[[sampleorder[1]]],
+                y = all_matrices[sampleorder[-1]],
+                add.cell.ids = sampleorder)
 
-rm(all_matrices)
-rm(loadObject)
-gc()
+  immunesamples = sampleorder[grep("_I",sampleorder)]
+  immune_matrices = lapply(all_matrices[immunesamples], 
+                         function(x){
+                           x@active.assay = "FB"
+                           x[["RNA"]] = NULL
+                           x
+                         })
 
-if(file.exists(owncache)){
-  save(alldata, paste0(owncache,"/loading_matrices.RData"))
-}
+  alldata_FB = merge(immune_matrices[[1]],
+                   immune_matrices[-1],
+                   add.cell.ids = immunesamples)
+  
+  if(file.exists(owncache)){
+    save(alldata,alldata_FB, file = paste0(owncache,"/loading_matrices.RData"))
+  }
+  
+  rm(all_matrices)
+  rm(loadObject)
+  gc()
 
 }else{
-  l = load(paste0(owncache,"/loading_matrices.RData"))
+  load(paste0(owncache,"/loading_matrices.RData"))
 }
 
 
@@ -104,7 +136,7 @@ if(file.exists(owncache)){
 
 ```{r addmetadata}
 
-metadata = read.csv2(paste0(datadir,"/../metadata.csv"))
+
 colnames(metadata) = gsub("X","",gsub("\\.","",colnames(metadata)))
 
 alldata = AddMetaData(alldata, 
@@ -140,10 +172,10 @@ alldata <- PercentageFeatureSet(alldata, "^Rp[sl]", col.name = "percent_ribo")
 
 Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
 
-```{r qc, fig.height=10}
 
-qc_feats <- c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo")
-VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
+```{r qc, fig.height=8, fig.width=8}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 1) &
   violintheme
   
 
@@ -156,6 +188,8 @@ The same QC as above are plotted below, only including cells and genes that pass
 
 ```{r filtering}
 
+if(!file.exists(paste0(owncache,"/filtering.RData"))){
+
 
 alldata <- subset(alldata, features = rownames(alldata)[Matrix::rowSums(alldata) > 3], 
                   cells = intersect(WhichCells(alldata, expression = nFeature_RNA > 200),
@@ -163,31 +197,45 @@ alldata <- subset(alldata, features = rownames(alldata)[Matrix::rowSums(alldata)
                                     WhichCells(alldata, expression = percent_ribo > 5))))
 
 gc()
+save(alldata, file = paste0(owncache,"/filtering.RData"))
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/filtering.RData"))
+}
 
 ```
 
-```{r type_qc_violins, fig.height = 10}
 
-VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
-    NoLegend() & violintheme
+```{r, fig.height=8, fig.width=8}
 
-
-VlnPlot(subset(alldata,
-               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Immune"])),
-        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
-    NoLegend() & violintheme
-VlnPlot(subset(alldata,
-               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Stroma"])),
-        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
-    NoLegend() & violintheme
-VlnPlot(subset(alldata,
-               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Epithelial"])),
-        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 1) &
     NoLegend() & violintheme
 
 ```
 
-```{r topexpressed, fig.height = 10, cache = TRUE}
+```{r, fig.height=4, fig.width=6}
+
+VlnPlot(alldata,
+        idents = unique(alldata$orig.ident[
+          alldata$Type == "Immune"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
+    NoLegend() & violintheme
+VlnPlot(alldata,  
+        idents = unique(alldata$orig.ident[
+          alldata$Type == "Stroma"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
+    NoLegend() & violintheme
+VlnPlot(alldata,
+        idents = unique(alldata$orig.ident[
+          alldata$Type == "Epithelial"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) + 
+    NoLegend() & violintheme
+
+```
+
+```{r topexpressed, fig.height = 6, fig.width = 6, cache = TRUE}
 
 par(mar = c(4, 8, 2, 1))
 C <- subset(alldata, downsample = 1000, seed = 42)@assays$RNA@counts
@@ -268,25 +316,23 @@ gc()
 
 
 if(file.exists(owncache)){
-  save(alldata, paste0(owncache,"/cellcyclescores.RData"))
+  save(alldata, file = paste0(owncache,"/cellcyclescores.RData"))
 }
 
 }else{
-  l = load(paste0(owncache,"/cellcyclescores.RData"))
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/cellcyclescores.RData"))
 }
 
 
 ```
 
 
-```{r}
+```{r, fig.width = 9, fig.height = 6}
 
-VlnPlot(alldata, features = c("S.Score", "G2M.Score"), group.by = "orig.ident", 
-    ncol = 3, pt.size = 0.1)
-
-VlnPlot(alldata, features = c("S.Score", "G2M.Score"), group.by = "orig.ident", 
-    ncol = 3, pt.size = 0)
-
+VlnPlot(alldata, features = c("S.Score", "G2M.Score"), group.by = "orig.ident",
+        pt.size = 0, ncol = 1) & violintheme
 
 ```
 
@@ -296,63 +342,130 @@ VlnPlot(alldata, features = c("S.Score", "G2M.Score"), group.by = "orig.ident",
 Doublets are identified and excluded using the DoubletFinder package.
 
 
-```{r df_prep, cache = TRUE}
+```{r doublet_prep}
 
-plan("multisession", workers = n_workers)
+if(!file.exists(paste0(owncache,"/doublet_prep.RData"))){
+plan("sequential")
 
   alldata = FindVariableFeatures(alldata, verbose = F)
   alldata = ScaleData(alldata, vars.to.regress = c("nFeature_RNA", "percent_mito"), 
       verbose = F)
   alldata = RunPCA(alldata, verbose = F, npcs = 20)
   alldata = RunUMAP(alldata, dims = 1:10, verbose = F)
-  
+  if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/doublet_prep.RData"))
+}
 
-```
-
-```{r doublets, cache = TRUE}
-  
-plan("multisession", workers = n_workers)
-
-sweeplist = list()
-
-singletList = future_lapply(unique(alldata$orig.ident), function(i){
-  message(i)
-  subdata=subset(alldata, idents = i)
-  sweep.res <- paramSweep_v3(subdata)#, num.cores = 3)
-  sweep.stats <- summarizeSweep(sweep.res, GT = FALSE)
-  bcmvn = find.pK(sweep.stats)
-
-  nExp <- round(ncol(subdata) * ifelse(ncol(subdata)<1200,0.08,ifelse(ncol(subdata)<2200,0.16,0.24)))  # the expected number of doublets was overestimated in the published analysis, but correcting this does not lead to a significant difference in the prediction
-  mypK = as.numeric(as.character(bcmvn$pK[which.max(bcmvn$BCmetric)]))
-  subdata <- doubletFinder_v3(subdata, pN = 0.25, pK = mypK, nExp = nExp, PCs = 1:10)
-  DF.name = colnames(subdata@meta.data)[grepl("DF.classification", colnames(subdata@meta.data))]
-  sl = subdata@meta.data[, DF.name]
-  names(sl) = colnames(subdata) 
-})
-names(singletList) = unique(alldata$orig.ident)
-
-alldata = AddMetaData(alldata, unlist(singletList)[
-  match(colnames(alldata), 
-        gsub(".*\\.","",names(unlist(singletList))))], "DF")
-
-cowplot::plot_grid(ncol = 2, DimPlot(alldata, group.by = "orig.ident") + NoAxes(), 
-    DimPlot(alldata, group.by = "DF") + NoAxes())
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/doublet_prep.RData"))
+}
 
 
 ```
 
 
-```{r df_dimplot, fig.height = 10}
 
-DimPlot(alldata, group.by = "DF", split.by = "orig.ident", ncol = 6) + NoAxes()
+```{r doublets}
+
+if(!file.exists(paste0(owncache,"/doublets.RData"))){
+
+  plan("sequential")
+
+  sweeplist = list()
+
+  for(i in unique(alldata$orig.ident)){
+    message(i)
+    data.filt=subset(alldata, idents = i)
+    sweep.res <- paramSweep_v3(data.filt)#, num.cores = 3)
+    sweep.stats <- summarizeSweep(sweep.res, GT = FALSE)
+    bcmvn <- find.pK(sweep.stats)
+
+    sweeplist[[i]] = bcmvn }
+
+
+    singletList = list()
+    for(i in unique(alldata$orig.ident)){
+      message(i)
+        data.filt=subset(alldata, idents = i)
+        nExp <- round(ncol(data.filt)*
+                        ifelse(ncol(data.filt)<12000,0.08,
+                               ifelse(ncol(data.filt)<17000,0.12,
+                                      ifelse(ncol(data.filt)<22000,0.16,
+                                             ifelse(ncol(data.filt)<27000,0.2,
+                                                    0.24)))))
+        mypK = as.numeric(as.character(sweeplist[[i]]$pK[
+          which.max(sweeplist[[i]]$BCmetric)]))
+        data.filt <- doubletFinder_v3(data.filt, pN = 0.25, pK = mypK, nExp = nExp, PCs = 1:10)
+        DF.name = colnames(data.filt@meta.data)[grepl("DF.classification", colnames(data.filt@meta.data))]
+        singletList[[i]] = data.filt@meta.data[, DF.name]
+        names(singletList[[i]]) = colnames(data.filt)
+
+    rm(data.filt)
+    gc()
+  }
+
+alldata = AddMetaData(alldata, unlist(singletList)[match(colnames(alldata), gsub(".*\\.","",names(unlist(singletList))))], "DF")
+
+
+if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/doublets_correctnExp.RData"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/doublets.RData"))
+}
+
 
 ```
 
 
-```{r df_violins}
+```{r}
 
-VlnPlot(alldata, features = "nFeature_RNA", group.by = "DF",pt.size = 0.1)
-VlnPlot(alldata, features = "nFeature_RNA", split.by = "DF", group.by = "orig.ident", pt.size = 0.1)
+plan("sequential")
+
+```
+
+
+
+```{r, fig.height = 3, fig.width = 6}
+
+cowplot::plot_grid(ncol = 2, DimPlot(alldata, group.by = "orig.ident") +
+                     NoAxes() + NoLegend() + dimtheme, 
+    DimPlot(alldata, group.by = "DF") + NoAxes() + dimtheme)
+
+
+```
+
+
+
+```{r df_dimplot, fig.height = 12, fig.width = 6}
+
+DimPlot(alldata, group.by = "DF", split.by = "orig.ident", ncol = 6) + 
+  NoAxes() & theme(plot.title = element_text(size = 8),
+     strip.text = element_text(size = 8)) & dimtheme
+
+```
+
+
+```{r df_violins, fig.height = 3, fig.width = 8}
+
+VlnPlot(alldata, features = "nFeature_RNA", group.by = "DF", 
+        pt.size = 0) + violintheme
+VlnPlot(alldata, features = "nFeature_RNA", split.by = "DF", 
+        group.by = "orig.ident", pt.size = 0)  &
+  theme(plot.title = element_text(size = 8),
+        axis.text = element_text(size = 8)) + violintheme
+
+
+```
+
+`r knitr::kable(table( alldata$orig.ident, alldata$DF))`
+
+```{r}
 
 alldata = alldata[, alldata@meta.data[, "DF"] == "Singlet"]
 
@@ -360,43 +473,43 @@ alldata = alldata[, alldata@meta.data[, "DF"] == "Singlet"]
 
 
 
-```{r cellcounts}
-
-table(alldata$orig.ident)
+```{r cellcounts, fig.height = 3, fig.width = 8}
 
 cellfreq = as.data.frame(table(alldata$orig.ident), stringsAsFactors = FALSE)
-cellfreq$Time = alldata$Time[match(cellfreq$Var1, alldata$orig.ident)]
 cellfreq$Type = alldata$Type[match(cellfreq$Var1, alldata$orig.ident)]
-cellfreq$Treatment = alldata$Treatment[match(cellfreq$Var1, alldata$orig.ident)]
-ggplot(cellfreq, aes(x = paste(Week, Treatment), y = Freq, color = Type)) + geom_point() +
-  theme(panel.background = element_blank(), legend.key = element_blank(),
+ggplot(cellfreq, aes(x = Var1, y = Freq, color = Type)) + geom_point() +
+  theme_classic() +
+  theme(panel.background = element_blank(),  
+        legend.key = element_blank(),
+        panel.grid.major.y = element_line(color = "#DDDDDD"),
         axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = "Week and treatment", y = "Number of cells")
+  labs(x = "Sample", y = "Number of cells")
+
+```
+
+```{r, fig.height = 8, fig.width = 8}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 1) &
+    NoLegend() & 
+  violintheme
 
 ```
 
 
-```{r violins}
-
-VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0.1, ncol = 2) +
-    NoLegend()
-VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
-    NoLegend()
-
-```
-
-
-```{r typeviolins}
+```{r typeviolins, fig.height = 4, fig.width = 8}
 
 VlnPlot(alldata[,alldata$Type == "Stroma"],
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
-    NoLegend()
+    NoLegend() &
+  violintheme
 VlnPlot(alldata[,alldata$Type == "Epithelial"],
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
-    NoLegend()
+    NoLegend() &
+  violintheme
 VlnPlot(alldata[,alldata$Type == "Immune"],
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
-    NoLegend()
+    NoLegend() & 
+  violintheme
 
 
 
@@ -405,158 +518,270 @@ VlnPlot(alldata[,alldata$Type == "Immune"],
 
 
 
-```{r firstnormalize, cache = TRUE}
+```{r firstnormalize}
 
+if(!file.exists(paste0(owncache,"/firstnormalize.RData"))){
+
+  plan("sequential")
 alldata = NormalizeData(alldata)
 
 suppressWarnings(suppressMessages(alldata <- FindVariableFeatures(alldata, selection.method = "vst", 
     nfeatures = 2000, verbose = FALSE, assay = "RNA")))
 alldata <- ScaleData(alldata, vars.to.regress = c("percent_mito", "nFeature_RNA"),     assay = "RNA")
+
 alldata <- RunPCA(alldata, npcs = 50, verbose = F, reduction.name = "pca_raw")
 alldata <- RunTSNE(alldata, reduction = "pca_raw", dims = 1:30, perplexity = 30, max_iter = 1000, 
     theta = 0.5, eta = 200, num_threads = 0, reduction.name = "tsne_raw")
 alldata <- RunUMAP(alldata, reduction = "pca_raw", dims = 1:30, n.components = 2, n.neighbors = 30, 
     n.epochs = 200, min.dist = 0.3, learning.rate = 1, spread = 1, reduction.name = "umap_raw")
 
+
+if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/firstnormalize.RData"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/firstnormalize.RData"))
+}
+
 ```
 
 
-```{r topgenes}
+```{r topgenes, fig.height = 3, fig.width = 5}
 
 top20 <- head(VariableFeatures(alldata), 20)
 
-LabelPoints(plot = VariableFeaturePlot(alldata), points = top20, repel = TRUE)
+lp = LabelPoints(plot = VariableFeaturePlot(alldata), points = top20, repel = TRUE) +
+  theme(axis.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        axis.text = element_text(size = 8))
+
+lp$layers[[2]]$aes_params$size = 3
+
+lp
 
 ```
 
 
 # PCA
 
-```{r firstpca}
+```{r firstpca, fig.height = 4, fig.width = 5}
 
-plot_grid(ncol = 3, 
-          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", 
-                  dims = 1:2) + NoLegend(),
-          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", 
-                  dims = 3:4) + NoLegend(),
-          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", 
-                  dims = 5:6) + NoLegend())
+plot_grid(plot_grid(ncol = 3,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
+                  dims = 1:2, shuffle = TRUE) + NoLegend() +  dimtheme + 
+               theme(axis.text = element_text(size = 8), axis.title = element_text(size = 8)),
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
+                  dims = 3:4, shuffle = TRUE) + NoLegend() +  dimtheme + 
+               theme(axis.text = element_text(size = 8), axis.title = element_text(size = 8)),
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
+                  dims = 5:6, shuffle = TRUE) + NoLegend() +  dimtheme + 
+               theme(axis.text = element_text(size = 8), axis.title = element_text(size = 8))),
+          get_legend(DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
+                  dims = 1:2, shuffle = TRUE) + theme(legend.position = "bottom") + dimtheme),
+          ncol = 1, rel_heights = c(2,1)
+)
 
-
-VizDimLoadings(alldata, dims = 1:5, reduction = "pca_raw", ncol = 5, balanced = T)
-
-ElbowPlot(alldata, reduction = "pca_raw", ndims = 50)
+plot_grid(plot_grid(ncol = 3,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
+                  dims = 1:2, shuffle = TRUE) + NoLegend() +  dimtheme,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
+                  dims = 3:4, shuffle = TRUE) + NoLegend() +  dimtheme,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
+                  dims = 5:6, shuffle = TRUE) + NoLegend() +  dimtheme),
+          get_legend(DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
+                  dims = 1:2, shuffle = TRUE) + theme(legend.position = "bottom") + dimtheme),
+          ncol = 1, rel_heights = c(3,1))
 
 ```
 
-# t-SNE
+```{r, fig.height = 3, fig.width = 6}
 
-```{r firsttsne}
-
-plot_grid(ncol = 2, DimPlot(alldata, reduction = "tsne_raw", group.by = "orig.ident") + 
-            NoAxes() + NoLegend(), 
-          DimPlot(alldata, reduction = "tsne_raw", group.by = "RelTime") + 
-            NoAxes() + NoLegend(), 
-          DimPlot(alldata, reduction = "tsne_raw", group.by = "Type") + 
-            NoAxes() + NoLegend())
+VizDimLoadings(alldata, dims = 1:5, reduction = "pca_raw", ncol = 5, balanced = T) &
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8))
 
 ```
+
+```{r, fig.height = 2, fig.width = 4}
+
+ElbowPlot(alldata, reduction = "pca_raw", ndims = 50) + 
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8))
+
+```
+
 
 
 # UMAP
 
-```{r firstumap}
+```{r firstumap, fig.height = 3, fig.width = 6}
 
-plot_grid(ncol = 3, DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident") +
-            NoAxes() + NoLegend(),
-    FeaturePlot(alldata, "RelTime", reduction = "umap_raw") + NoAxes() + NoLegend(),
-    DimPlot(alldata, group.by = "Type") + NoAxes() + NoLegend()) 
+plot_grid(ncol = 3, DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident",
+                            shuffle = TRUE) + NoAxes() + NoLegend() + dimtheme,
+    DimPlot(alldata, reduction = "umap_raw", group.by = "Type", label = TRUE,
+                            shuffle = TRUE) + NoAxes() + NoLegend() + dimtheme)
 
 ```
 
 
+
 # Integrate data
 
-```{r getanchors, cache = TRUE}
+
+
+```{r normalizeintegrated}
+
+plan("sequential")
+
+if(!file.exists(paste0(owncache,"/normalizeintegrated.RData"))){
+
+if(!file.exists(paste0(owncache,"/fullintegration.RData"))){
+
+if(!file.exists(paste0(owncache,"/getanchors.RData"))){
+
+plan("multisession", workers = 5, gc = TRUE)
 
 alldata <- AddMetaData(alldata, gsub("_I_","_",gsub("_S_","_",
                             gsub("_E_","_",gsub("_Str","",gsub("_Imm","",
-                            gsub("_Epi","",alldata$orig.ident)))))), 
+                            gsub("_Epi","",alldata$orig.ident)))))),
                      "source")
 data.list <- SplitObject(alldata, split.by = "source")
-    
-data.list = lapply(data.list, function(x){
+rm(alldata)
+gc()
+
+message("object split")
+
+data.list = future_lapply(data.list, function(x){
+  message("sample")
     x <- NormalizeData(x, verbose = FALSE)
     x <- FindVariableFeatures(x, selection.method = "vst",
         nfeatures = 2000, verbose = FALSE)
     x
 })
-    
+
+
+message("data normalized")
+
 features <- SelectIntegrationFeatures(object.list = data.list)
-data.list <- lapply(X = data.list, FUN = function(x) {
+
+message("features selected")
+
+#plan("multiprocess", workers = 3, gc = TRUE)
+plan("sequential")
+
+data.list <- future_lapply(X = data.list, FUN = function(x) {
   x <- ScaleData(x, features = features, verbose = FALSE)
   x <- RunPCA(x, features = features, verbose = FALSE)
 })
 
-data.anchors <- FindIntegrationAnchors(object.list = data.list, dims = 1:30, 
-    reduction = "rpca", anchor.features = features, 
+message("pcas run")
+
+data.anchors <- FindIntegrationAnchors(object.list = data.list, dims = 1:30,
+    reduction = "rpca", anchor.features = features,
     reference = match(c("G_W0","G_W7","G_D0_ut","G_D60_ut",
                         "G_W7_aIL12","G_D30_il","G_D40_il",
                         "G_D60_il","G_W3_aIL12","G_W5_aIL12"),
                       names(data.list)))
 
+message("anchors found")
+
 rm(data.list)
 gc()
 
-```
 
-```{r fullintegration, cache = TRUE}
+if(file.exists(owncache)){
+  save(data.anchors, file = paste0(owncache,"/getanchors.RData"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/getanchors.RData"))
+}
+
+
+plan("sequential")
 
 alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "RPCA")
 
 rm(data.anchors)
 gc()
-  
-```
+  if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/fullintegration.RData"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/fullintegration.RData"))
+}
 
 
-```{r normalizeintegrated, cache = TRUE}
 
 alldata <- ScaleData(alldata)
 alldata <- RunPCA(alldata, npcs = 30)
 alldata <- RunUMAP(alldata, dims = 1:30)
+  if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/normalizeintegrated.RData"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/normalizeintegrated.RData"))
+}
 
 ```
 
 
-```{r}
 
-plot_grid(ncol = 2,
-  DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", pt.size = 0.01) +
-    NoAxes() + ggtitle("PCA raw_data") + NoLegend(),
-  DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident", pt.size = 0.01) +
-    NoAxes() + ggtitle("UMAP raw_data") + NoLegend(),
-  
-  DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident") +
-    NoAxes() + ggtitle("PCA integrated") + NoLegend(),
-  DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident") +
-    NoAxes() + ggtitle("UMAP integrated") + NoLegend()
+
+```{r, fig.height = 3, fig.width = 6}
+
+plot_grid(ncol = 3,
+
+  DimPlot(alldata, reduction = "pca", group.by = "orig.ident", shuffle = TRUE) +
+    NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
+  DimPlot(alldata, reduction = "umap", group.by = "orig.ident", shuffle = TRUE) +
+    NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme,
+  get_legend(DimPlot(alldata, reduction = "pca", group.by = "orig.ident", shuffle = TRUE) +
+    NoAxes() + ggtitle("PCA integrated") + dimtheme)
 )
 
-DimPlot(alldata, reduction = "umap", split.by = "orig.ident")+NoAxes() + NoLegend()
+  
 
-DimPlot(alldata, reduction = "umap", group.by = "Model", shuffle = TRUE) + NoAxes()
+```
+
+
+```{r, fig.height = 9, fig.width = 6}
+
+DimPlot(alldata, reduction = "umap", split.by = "orig.ident", 
+        ncol = 6)+NoAxes() + NoLegend() & theme(strip.text= element_text(size = 8)) + 
+  dimtheme
+
+```
+
+
+```{r, fig.height = 3, fig.width = 3}
+
+DimPlot(alldata, reduction = "umap", group.by = "Model", 
+        shuffle = TRUE) + NoAxes() + dimtheme
 
 
 ```
+
 
 # Plot QC in UMAP
 
-```{r, fig.height = 10}
+```{r, fig.height = 4, fig.width = 4}
 
 FeaturePlot(alldata, reduction = "umap", 
             features = qc_feats, 
-    order = T, slot = "data", combine = T)
+    order = T, slot = "data", combine = T) &
+      NoAxes()  & dimtheme
 
 ```
 
@@ -564,15 +789,17 @@ FeaturePlot(alldata, reduction = "umap",
 
 # Plot genes of interest
 
-```{r}
+
+```{r, fig.height = 4, fig.width = 4}
 
 DefaultAssay(alldata) = "RNA"
 
-FeaturePlot(alldata, reduction = "umap", features = c("Mki67","Pcna"), 
-    order = T, slot = "data", combine = T)
-
-FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), 
-    order = T, slot = "data", combine = T)
+FeaturePlot(alldata, reduction = "umap",
+            features = c("Mki67","Pcna", "Ptprc","Epcam"),
+    order = T, slot = "data", combine = T) & NoAxes() &
+  theme(plot.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
 
 DefaultAssay(alldata) = "RPCA"
 
@@ -628,9 +855,15 @@ while(min(seeddf$included)<5){
   currcol = currcol + 1
   if(sum(seeddf[,currcol]) != 241406){print(sum(seeddf[,currcol]))}
 }
+seeddf
 }
 
-combineclusters = function(default =, clusters = , meta = ){
+combineclusters = function(default, clusters, meta){
+  
+  clusters = lapply(clusters, function(x){
+    x$Cell = as.character(x$Cell)
+    x[,2] = as.character(x[,2])
+    x})
   
 clusterdf = clusters[[1]]
   
@@ -642,10 +875,10 @@ meta = merge(meta, clusterdf, by.x = "row.names", by.y = "Cell")
 rownames(meta) = meta[,1]
 meta = meta[,-1]
   
-clustercols = grep("seed",colnames(meta))
+clustercols = colnames(meta)[grep("cluster_seed",colnames(meta))]
 
 
-for(i in colnames(meta)[grep("cluster_seed",colnames(meta))]){
+for(i in clustercols){
   meta[,i] = factor(meta[,i],levels = c(sort(unique(meta[,i])),9999))
   meta[is.na(meta[,i]),i] = 9999
   
@@ -689,7 +922,7 @@ toptranslation = apply(tps, 1, function(x){
 
 meta$RPCA_cluster = as.numeric(unlist(toptranslation))
 
-if(length(stillNA = which(is.na(meta[,"RPCA_cluster"])))>0){stop("there are still non-assigned cells")}
+if(length(which(is.na(meta[,"RPCA_cluster"])))>0){stop("there are still non-assigned cells")}
 
 meta
 
@@ -697,40 +930,106 @@ meta
 
 ```
 
-```{r, cache = TRUE}
+```{r fullclustering}
 
+if(!file.exists(paste0(owncache,"/fullclustering.RData"))){
+
+  if(!file.exists(paste0(owncache, "clusters.rds"))){
+plan("multisession", workers = 1, gc = TRUE)
 
 meta = alldata@meta.data
+meta = meta[order(factor(meta$orig.ident,levels = sampleorder)),]
 
-seeddf = getseedcells(seeds = c(123,42,666,789,345,636,234,542628,57362,
+seeds = c(123,42,666,789,345,636,234,542628,57362,
           059482,7665,2342,82349,953020,03248,1284,
-          4135,659,2340,6543,602), meta = meta)
+          4135,659,2340,6543,602)
+
+seeddf = getseedcells(seeds = seeds, meta = meta)
 
 
 res = 0.5
 
-clusters = lapply(gsub("seed","",colnames(seeddf)), function(seed){
-  seedcells = rownames(seeddf)[seeddf[,match(paste0("seed",seed), colnames(seeddf))]==1]
-  seeddata = subset(alldata, cells = seedcells)
+if(file.exists(owncache)){
   
-  seeddata <- FindNeighbors(seeddata, dims = 1:30, k.param = 350, prune.SNN = 1/15)
-  seeddata <- FindClusters(seeddata, graph.name = paste0("RPCA_snn"),
-                            resolution = res, algorithm = 1)
+  for(seed in seeds){
+    
+    if(!file.exists(paste0(owncache, "clusters/cluster_seed", seed, ".rds"))){
+      message(seed)
+      seedcells = rownames(seeddf)[seeddf[,match(paste0("seed",seed), colnames(seeddf))]==1]
+      seeddata = subset(alldata, cells = seedcells)
+      message("subsetted")
+      seeddata[["RNA"]] = NULL
+      
+      seeddata <- FindNeighbors(seeddata, dims = 1:30, k.param = 350, prune.SNN = 1/15)
+                   seeddata <- FindClusters(seeddata, graph.name = paste0("RPCA_snn"),
+                                            resolution = res, algorithm = 1)
+      x = seeddata@meta.data[,"seurat_clusters", drop = FALSE]
+      x$Cell = rownames(x)
+      colnames(x)[1] = paste0("cluster_seed",seed)
+      rm(seeddata) 
+      gc()
+    
+      saveRDS(x[c("Cell",paste0("cluster_seed",seed))], 
+              paste0(owncache, "clusters/cluster_seed", seed, ".rds"))
+      
+      rm(x)
+      gc()
+    
+    }
+  }
   
-  x = seddata@meta.data[,c("X","seurat_clusters")]
-  colnames(x) = c("Cell",paste0("cluster_",seed))
-  x
-})
-names(clusters) = gsub("seed","",colnames(seeddf))
+  clusters = lapply(paste0(owncache, "clusters/cluster_seed", seeds, ".rds"), readRDS) 
+  
+}else{
 
-rm(seeddf)
+  #clusters = lapply(gsub("seed","",colnames(seeddf)), function(seed){
+  for(seed in seeds){
+  #for(seed in c(57362, 123, 42)){
+    message(seed)
+    seedcells = rownames(seeddf)[seeddf[,match(paste0("seed",seed), colnames(seeddf))]==1]
+    seeddata = subset(alldata, cells = seedcells)
+    message("subsetted")
+    seeddata[["RNA"]] = NULL
+    
+    
+    futureAssign(paste0("cluster_seed",seed),
+                 {seeddata <- FindNeighbors(seeddata, dims = 1:30, k.param = 350, prune.SNN = 1/15)
+                 seeddata <- FindClusters(seeddata, graph.name = paste0("RPCA_snn"),
+                                          resolution = res, algorithm = 1)
+                 x = seeddata@meta.data[,"seurat_clusters", drop = FALSE]
+                 x$Cell = rownames(x)
+                 colnames(x)[1] = paste0("cluster_seed",seed)
+                 x[c("Cell",paste0("cluster_seed",seed))]})              
+    
+    rm(seeddata)
+    gc()
+  
+  }
+  #)
+  
+  clusters = lapply(paste0("cluster_",seeds), get)
+  #clusters = lapply(paste0("cluster_seed",c(57362, 123, 42)), get)
+
+}
+
+names(clusters) = paste0("cluster_", seeds)
+#names(clusters) = paste0("cluster_seed",c(57362, 123, 42))
+
+  if(file.exists(owncache)){
+    saveRDS(clusters, paste0(owncache, "clusters.rds"))
+  }
+  rm(seeddf)
+}else{
+  clusters = readRDS(paste0(owncache, "clusters.rds"))
+}
+
 
 
 meta = combineclusters(default = "cluster_seed57362",
                        clusters = clusters,
-                       meta = meta)
+                       meta = alldata@meta.data)
 
-if(rownames(meta) != colnames(alldata)){
+if(!identical(rownames(meta), colnames(alldata))){
   meta = meta[colnames(alldata),]
 }
 
@@ -740,50 +1039,72 @@ alldata = SetIdent(alldata, value = "RPCA_cluster")
 
 DefaultAssay(alldata) <- "RNA"
 
-rm(meta, clusters, getseedcells, combineclusters)
+rm(meta, clusters)
+
+
+
+
+  if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/fullclustering.RData"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/fullclustering.RData"))
+}
 
 ```
-
 
 ```{r}
 
-DimPlot(alldata, label = TRUE) + NoAxes() + NoLegend()
+plan("sequential")
 
 ```
 
-```{r, fig.height = 3}
+```{r, fig.height = 2, fig.width = 2}
+
+DimPlot(alldata, label = TRUE) + NoAxes() + NoLegend() + dimtheme
+DimPlot(alldata, group.by = "Type", label = TRUE) + NoAxes() + NoLegend() + 
+  labs(title = "Sort fraction") + dimtheme
+
+```
+
+```{r, fig.height = 3, fig.width = 6}
 
 DotPlot(alldata, features = c("Epcam","Ptprc")) + coord_flip()
 
 ```
 
 
-```{r}
+```{r, fig.height = 3, fig.width = 5}
 
 ggplot(alldata@meta.data, aes(fill = Type, x = RPCA_cluster)) + geom_bar(position = "fill")
 
 ggplot(alldata@meta.data, aes(fill = Model, x = RPCA_cluster)) + geom_bar(position = "fill")
 
-ggplot(alldata@meta.data, aes(fill = as.factor(RelTime), x = RPCA_cluster)) + 
-  geom_bar(position = "fill") + 
-  scale_fill_manual(values = colorRampPalette(
-    c("grey","blue"))(length(unique(alldata@meta.data$RelTime))))
 
 ```
 
 
-```{r}
 
-VlnPlot(alldata, group.by = "RPCA_cluster", features = qc_feats, pt.size = 0.1, ncol = 2)
-VlnPlot(alldata, group.by = "RPCA_cluster", features = qc_feats, pt.size = 0, ncol = 2)
+
+```{r, fig.height = 3, fig.width = 6}
+
+VlnPlot(alldata, group.by = "RPCA_cluster", features = qc_feats, pt.size = 0, ncol = 2) &
+  theme(plot.title = element_text(size = 8),
+        axis.text = element_text(size = 8),
+        axis.title = element_blank()) + violintheme
 
 ```
-
 
 
 # Data cleaning
 
-```{r cleandata, cache = TRUE}
+```{r cleandata}
+
+
+if(!file.exists(paste0(owncache, "cleaned.RData"))){
 
 immuneclusters = c(0,1,3,8,10,12,14,16,21)
 stromaclusters = c(4,7,9,11,13,15,17,18,20)
@@ -810,9 +1131,12 @@ cleandata = alldata
 
 rm(alldata)
 
+gc()
+
 immunedata = subset(cleandata, cells = immunecells)
 immunedata@active.assay = "RNA"
 immunedata[["RPCA"]] = NULL
+immunedata[["FB"]] = subset(alldata_FB, cells = Cells(immunedata))[["FB"]]
 saveRDS(immunedata, "../data/SingleCell/TcellTransfer/R_objects/immune_data.rds")
 rm(immunedata)
 
@@ -828,84 +1152,69 @@ epidata[["RPCA"]] = NULL
 saveRDS(epidata, "../data/SingleCell/TcellTransfer/R_objects/epithelial_data.rds")
 rm(epidata)
 
+gc()
+
+plan("sequential")
+
+cleandata@active.assay = "RPCA"
+
 cleandata <- ScaleData(cleandata)
 cleandata <- RunPCA(cleandata, npcs = 30)
 cleandata <- RunUMAP(cleandata, dims = 1:30)
+  
+  save(cleandata, file = paste0(owncache, "cleaned.RData"))  
 
-```
-
-
-```{r dimplots}
-
-plot_grid(ncol = 2, 
-          DimPlot(cleandata, reduction = "umap", group.by = "RPCA_cluster", 
-                  label = TRUE) + 
-            ggtitle("louvain_0.5") + NoLegend())
-
-```
-
-
-```{r}
-
-TypeClusters = list(Immune = immuneclusters, Stroma = stromaclusters, Epithelial = epiclusters)
-
-ggplotColours <- function(n = 6, h = c(0, 360) + 15){
-  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
-  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache, "cleaned.RData"))
 }
 
-color_list <- ggplotColours(n=length(unique(cleandata@active.ident)))
-names(color_list) = sort(as.numeric(as.character(unique(cleandata@active.ident))))
-
-DimPlot(cleandata, reduction = "umap", split.by = "Type", label = TRUE)+NoAxes()+NoLegend() +
-  scale_color_manual(values = color_list)
-
-DimPlot(cleandata, reduction = "umap", split.by = "Model", label = TRUE)+NoAxes()+NoLegend() +
-  scale_color_manual(values = color_list)
 
 ```
 
 
-```{r}
 
-sampleorder = unique(cleandata$orig.ident[
-  order(cleandata$Model,cleandata$Treatment,cleandata$Time, 
-        decreasing = c(FALSE, TRUE, FALSE))])
+```{r dimplots,fig.height = 2, fig.width = 2}
 
-plot_grid(plotlist = lapply(unique(cleandata$Type), function(type){
-  typemeta = cleandata@meta.data[cleandata@meta.data$Type %in% type,]
-  typemeta$Treatment = factor(typemeta$Treatment, levels = c("untreated","aIL12"))
-  typemeta = typemeta[order(typemeta$Model,typemeta$Treatment,typemeta$Time),]
-  typemeta$orig.ident = factor(typemeta$orig.ident, levels = unique(typemeta$orig.ident))
-  typemeta$RPCA_cluster = factor(typemeta$RPCA_cluster, levels = 
-                                   sort(as.numeric(unique(typemeta$RPCA_cluster))))
-  ggplot(typemeta, aes(x = orig.ident, fill = RPCA_cluster)) +
-    geom_bar(position = "fill") + 
-    labs(fill = "Cluster") + 
-  scale_fill_manual(values = color_list[as.character(TypeClusters[[type]])]) + 
-    theme(axis.text.x = element_text(angle = 90, hjust = 1), 
-          legend.key = element_blank(), 
-          legend.position = "bottom", panel.background = element_blank(),
-          panel.grid = element_blank())
-}), ncol = 3)
+
+DimPlot(cleandata, reduction = "umap", label = TRUE,
+                        group.by = "RPCA_cluster", shuffle = TRUE) +
+            NoAxes() + labs(title = "Clustering") + NoLegend() + 
+  theme(plot.title = element_text(size = 10)) + dimtheme
+
 
 ```
 
 
-```{r umaps, fig.height = 9}
+```{r, fig.height = 3, fig.width=7}
 
-source("stylesource.R")
+DimPlot(cleandata, reduction = "umap", split.by = "Type") +
+  NoAxes() + NoLegend() + dimtheme
+
+```
+
+
+```{r umaps, fig.height = 6, fig.width = 6}
+
+typecolors = c(Stroma = "#F4DF9E",Immune = "#D6A7A0", Epithelial = "#A6D8DA")
+modelcolors = c(Rag2 = "#9E68B1", SCID = "#FCA549")
+treatmentcolors = c(il = "#00C9CF", ut = "#FB8C80", aIL12 = "#00C9CF", untreated = "#FB8C80")
+timecolors = scale_color_viridis_c(option = "viridis", direction = 1)
+
 
 allplots = list(
-          DimPlot(cleandata, reduction = "umap", group.by = "Model", shuffle = TRUE) + NoAxes() + 
-             scale_color_manual(values = modelcolors),
+          DimPlot(cleandata, reduction = "umap", group.by = "Model", shuffle = TRUE) + 
+            NoAxes() + 
+             scale_color_manual(values = modelcolors) + dimtheme,
           FeaturePlot(cleandata, cells = sample(Cells(cleandata)),
                       reduction = "umap", features = "RelTime") + 
-             NoAxes() + labs(title = "Time point") + timecolors,
-          DimPlot(cleandata, reduction = "umap", group.by = "Treatment", shuffle = TRUE) + NoAxes() +
+             NoAxes() + labs(title = "Time point") + timecolors + dimtheme,
+          DimPlot(cleandata, reduction = "umap", group.by = "Treatment", shuffle = TRUE) +
+            NoAxes() + dimtheme +
              scale_color_manual(values = treatmentcolors),
           DimPlot(cleandata, reduction = "umap", group.by = "Type", shuffle = TRUE) +
-            NoAxes() + labs(title = "Sort fraction") +
+            NoAxes() + labs(title = "Sort fraction") + dimtheme +
              scale_color_manual(values = typecolors))
 
 plot_grid(ncol = 2, plotlist = allplots)

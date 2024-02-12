@@ -1,0 +1,991 @@
+---
+title: "Preparation of data for Il10KO single cell analysis"
+editor_options:
+  chunk_output_type: inline
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  bookdown::html_document2:
+    code_folding: hide
+    toc: yes
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+params:
+  dataset: 1
+---
+
+```{r Setup, echo = FALSE}
+knitr::opts_chunk$set(fig.width  = 7,
+                      results    = "hold",
+                      message    = FALSE,
+                      cache.lazy = FALSE,
+                      warning    = FALSE)
+
+
+```
+
+
+
+
+```{r setup}
+ 
+library(Seurat)
+library(Matrix)
+library(ggplot2)
+
+library(cowplot)
+library(DoubletFinder)
+# library(clustree)
+# 
+library(future)
+library(future.apply)
+ 
+datadir = "../data/SingleCell/Il10KO/expression_matrices"
+
+owncache = "../data/SingleCell/Il10KO/cache/"
+
+violintheme = theme(axis.text = element_text(size = 8),
+        plot.title = element_text(size = 8),
+        legend.key.size = unit(8, "pt"),
+        axis.title = element_blank())
+dimtheme = theme(legend.text = element_text(size = 8),
+        plot.title = element_text(size = 8),
+        legend.key.size = unit(8, "pt"))
+
+dotviolin = function(v){
+  v[[1]]$layers[[2]]$aes_params$shape = 16
+  v[[2]]$layers[[2]]$aes_params$shape = 16
+  v[[3]]$layers[[2]]$aes_params$shape = 16
+  v[[4]]$layers[[2]]$aes_params$shape = 16
+  v[[1]]$layers[[2]]$aes_params$alpha = 0.3
+  v[[2]]$layers[[2]]$aes_params$alpha = 0.3
+  v[[3]]$layers[[2]]$aes_params$alpha = 0.3
+  v[[4]]$layers[[2]]$aes_params$alpha = 0.3
+  v & violintheme
+}
+
+metadata = read.csv2(paste0(datadir,"/../metadata.csv"))
+sampleorder = c('BALBc_6W_EPI', 'BALBc_6W_IMM', 'BALBc_6W_STR',
+                'G_10W_EPI', 'G_10W_IMM', 'G_10W_STR',
+                'G_12W_EPI', 'G_12W_IMM', 'G_12W_STR',
+                'G_14W_EPI', 'G_14W_IMM', 'G_14W_STR',
+                'G_8W_EPI', 'G_8W_IMM', 'G_8W_STR',
+                'IL10_6W_EPI', 'IL10_6W_IMM', 'IL10_6W_STR')
+
+
+qc_feats <- c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo")
+
+```
+
+```{r, include = FALSE}
+
+if(file.exists(owncache)){
+  message(paste0("Intermediate data files will be loaded from and saved to ",owncache))
+}else{
+  message("Intermediate data files will not be saved or loaded")
+}
+
+```
+
+# Gene expression matrices
+
+The gene expression matrices were produced using CellRanger on the raw .fastq-files. These files can be found at 
+
+```{r loading_matrices}
+
+if(!file.exists(paste0(owncache,"/loading_matrices.RData"))){
+
+plan("multisession", workers = 4, gc = TRUE)
+
+loadObject = function(d){
+  sample = sub("\\.h5","",sub(".*/","",d))
+  expression_mat = Read10X_h5(filename = d)
+  if(class(expression_mat)=="dgCMatrix"){
+    data_obj = CreateSeuratObject(expression_mat, sample)
+  }else{
+      data_obj = CreateSeuratObject(expression_mat$`Gene Expression`, sample)
+      data_obj[["FB"]] = CreateAssayObject(expression_mat$`Antibody Capture`)
+      data_obj@active.assay = "RNA"
+  }
+  data_obj
+}
+
+system.time(
+  {
+    datafiles = list.files(datadir, full.names = TRUE)
+    all_matrices = future_lapply(datafiles, function(d){
+      message(d)
+      sample = sub("\\.h5","",sub(".*/","",d))
+      message(sample)
+  loadObject(d)
+})
+names(all_matrices) = sub("\\.h5","",sub(".*/","",datafiles))
+gc()})
+
+alldata = merge(x = all_matrices[[sampleorder[1]]],
+                y = all_matrices[sampleorder[-1]],
+                add.cell.ids = sampleorder)
+
+  immunesamples = sampleorder[grep("_IMM",sampleorder)]
+  immune_matrices = lapply(all_matrices[immunesamples], 
+                         function(x){
+                           x@active.assay = "FB"
+                           x[["RNA"]] = NULL
+                           x
+                         })
+  rm(all_matrices)
+
+  alldata_FB = merge(immune_matrices[[1]],
+                   immune_matrices[-1],
+                   add.cell.ids = immunesamples)
+  
+  if(file.exists(owncache)){
+    save(alldata,alldata_FB, file = paste0(owncache,"/loading_matrices.RData"))
+  }
+
+rm(loadObject)
+gc()
+
+plan("sequential")
+
+
+}else{
+  load(paste0(owncache,"/loading_matrices.RData"))
+}
+
+
+```
+
+```{r addmetadata}
+
+
+colnames(metadata) = gsub("X","",gsub("\\.","",colnames(metadata)))
+
+alldata = AddMetaData(alldata,
+                      factor(metadata[match(alldata$orig.ident, metadata$libraryname),"genotype"],
+                             levels = c("WT","Il10KO")),
+                      "Genotype")
+alldata = AddMetaData(alldata, metadata[match(alldata$orig.ident, metadata$libraryname),"time"],
+                      "Week")
+alldata = AddMetaData(alldata,
+                      metadata[match(alldata$orig.ident, metadata$libraryname),"celltype"],
+                      "Type")
+
+
+
+alldata <- PercentageFeatureSet(alldata, "^mt-", col.name = "percent_mito")
+
+alldata <- PercentageFeatureSet(alldata, "^Rp[sl]", col.name = "percent_ribo")
+
+```
+
+# Plot QC vars
+
+Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
+
+```{r qc, fig.height=4, fig.width=6}
+
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
+  violintheme
+
+
+```
+
+
+# Filter cells and genes
+
+The same QC as above are plotted below, only including cells and genes that pass filtering limits (gene limit: > 3 copies expressed, cell filter: > 200 unique genes). The top expressed genes are also shown. Mitochondrial and ribosomal genes are filtered out of the data, as are the highly expressed genes Malat1 and Gm42418.
+
+```{r filtering}
+
+if(!file.exists(paste0(owncache,"/filtering.RData"))){
+
+
+alldata <- subset(alldata, features = rownames(alldata)[Matrix::rowSums(alldata) > 3],
+                  cells = intersect(WhichCells(alldata, expression = nFeature_RNA > 200),
+                                    intersect(WhichCells(alldata, expression = percent_mito < 10),
+                                    WhichCells(alldata, expression = percent_ribo > 5))))
+
+gc()
+save(alldata, file = paste0(owncache,"/filtering.RData"))
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/filtering.RData"))
+}
+
+```
+
+```{r, fig.height=4, fig.width=6}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
+    NoLegend() & violintheme
+
+
+VlnPlot(alldata,
+        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Immune"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend() & violintheme
+VlnPlot(alldata,
+        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Stroma"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend() & violintheme
+VlnPlot(alldata,
+        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Epithelial"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend() & violintheme
+
+```
+
+```{r topexpressed, fig.height = 6, fig.width = 6, cache = TRUE}
+
+par(mar = c(4, 8, 2, 1))
+C <- subset(alldata, downsample = 1000, seed = 42)@assays$RNA@counts
+C <- Matrix::t(Matrix::t(C)/Matrix::colSums(C)) * 100
+#nC = ncol(C)
+
+most_expressed <- order(apply(C, 1, median), decreasing = T)[20:1]
+
+boxplot(as.matrix(t(C[most_expressed, ])), cex = 0.1, las = 1, xlab = "% total count per cell",
+     col = (scales::hue_pal())(20)[20:1], horizontal = TRUE)
+
+
+rm(C)
+rm(most_expressed)
+
+
+
+# Filter MALAT1, Gm42418, mitochondrial genes and ribosomal genes
+alldata <- alldata[!grepl("Malat1", rownames(alldata)) &
+                     !grepl("Gm42418", rownames(alldata)) &
+                     !grepl("^mt-", rownames(alldata)) & !
+                     grepl('^Rp[sl]', rownames(alldata)), ]
+
+
+```
+
+
+`r knitr::kable(table(alldata$orig.ident))`
+
+
+
+
+# Cell cycle scores
+
+The S-phase and G2M-phase scores are calculated based on the cell cycle gene lists defined in the Seurat package (translated to mouse genes originally using biomaRt).
+
+```{r cellcyclescores}
+
+if(!file.exists(paste0(owncache,"/cellcyclescores.RData"))){
+
+  g2mFeat = c("Smc4","Dlgap5","Ctcf","Cdc25c","Gtse1","Kif20b",
+              "Ttk","Tacc3","Top2a","Tpx2","Cdca3","Ncapd2",
+              "Cks2","Anp32e","G2e3","Lbr","Cdca2","Cks1brt",
+              "Ckap2","Hmgb2","Kif11","Nek2","Cenpe","Hjurp",
+              "Ect2","Aurkb","Cks1b","Kif23","Nuf2","Hmmr",
+              "Cdca8","Psrc1","Anln","Cdc20","Birc5","Ndc80",
+              "Rangap1","Ckap5","Kif2c","Cenpf","Nusap1","Cenpa",
+              "Aurka","Ube2c","Ckap2l","Mki67","Tubb4b","Bub1",
+              "Ccnb2")
+  sFeat = c("Msh2","Exo1","Mcm4","Rrm2","Mcm2","Chaf1b","Gmnn",
+            "Cdc45","Slbp","Ubr7","Cdc6",
+            "Rad51ap1","Rpa2","Hells","Fen1","Gins2","Uhrf1",
+            "Mcm6","Ung","Dscc1","Usp1","Clspn",
+            "Cdca7","Pola1","Nasp","Dtl","Mcm5","Wdr76","Prim1",
+            "Casp8ap2","Tipin","Blm","Rrm1",
+            "Brip1","Rad51","Tyms","E2f8","Rfc2","Ccne2","Pcna")
+
+
+
+
+# Before running CellCycleScoring the data need to be normalized and
+# logtransformed.
+
+alldata = NormalizeData(alldata)
+
+alldata <- CellCycleScoring(object = alldata, g2m.features = g2mFeat,
+    s.features = sFeat)
+
+rm(g2mFeat)
+rm(sFeat)
+gc()
+
+
+if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/cellcyclescores.RData"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/cellcyclescores.RData"))
+}
+
+
+```
+
+
+```{r, fig.width = 6, fig.height = 3}
+
+VlnPlot(alldata, features = c("S.Score", "G2M.Score"), group.by = "orig.ident",
+        pt.size = 0) & violintheme
+
+```
+
+
+# Find Doublets
+
+Doublets are identified and excluded using the DoubletFinder package.
+
+
+
+```{r doublets}
+
+if(!file.exists(paste0(owncache,"/doublets.RData"))){
+
+  
+  if(!file.exists(paste0(owncache,"/doublet_prep.RData"))){
+    
+      alldata = FindVariableFeatures(alldata)
+      alldata = ScaleData(alldata, vars.to.regress = c("nFeature_RNA", "percent_mito"))
+      alldata = RunPCA(alldata, npcs = 20)
+      alldata = RunUMAP(alldata, dims = 1:10)
+      if(file.exists(owncache)){
+      save(alldata, file = paste0(owncache,"/doublet_prep.RData"))
+    }
+  
+  }else{
+    rm(alldata)
+    gc()
+    load(paste0(owncache,"/doublet_prep.RData"))
+  }
+  
+
+  if(!file.exists(paste0(owncache,"sweeplist.rds"))){
+    sweeplist = list()
+
+    for(i in unique(alldata$orig.ident)){
+      message(i)
+      data.filt=subset(alldata, idents = i)
+      sweep.res <- paramSweep_v3(data.filt)#, num.cores = 3)
+      sweep.stats <- summarizeSweep(sweep.res, GT = FALSE)
+      bcmvn <- find.pK(sweep.stats)
+  
+      sweeplist[[i]] = bcmvn }
+    saveRDS(sweeplist, paste0(owncache,"sweeplist.rds"))
+  }else{
+    sweeplist = readRDS(paste0(owncache,"sweeplist.rds"))
+  }
+  
+  if(!file.exists(paste0(owncache,"singletList.rds"))){
+    singletList = list()
+    for(i in unique(alldata$orig.ident)){
+      message(i)
+      
+      data.filt=subset(alldata, idents = i)
+    nExp <- round(ncol(data.filt) *
+                    ifelse(ncol(data.filt)<12000,0.08,
+                           ifelse(ncol(data.filt)<22000,0.16,0.24)))
+    # expect 8%-24% doublets
+    mypK = as.numeric(as.character(sweeplist[[i]]$pK[
+      which.max(sweeplist[[i]]$BCmetric)]))
+    data.filt <- doubletFinder_v3(data.filt, pN = 0.25,
+                                  pK = mypK, nExp = nExp, PCs = 1:10)
+    DF.name = colnames(data.filt@meta.data)[grepl("DF.classification",
+                                                  colnames(data.filt@meta.data))]
+    singletList[[i]] = data.filt@meta.data[, DF.name]
+    names(singletList[[i]]) = colnames(data.filt)
+
+    rm(data.filt)
+    gc()
+    }
+    saveRDS(singletList, paste0(owncache,"singletList.rds"))
+  }else{
+    singletList = readRDS(paste0(owncache,"singletList.rds"))
+  }
+
+alldata = AddMetaData(alldata, unlist(singletList)[match(colnames(alldata), gsub(".*\\.","",names(unlist(singletList))))], "DF")
+
+
+if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/doublets.RData"))
+  saveRDS(alldata@meta.data,
+           file = paste0(owncache,"/doublets_metadata.rds"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/doublets.RData"))
+}
+
+
+```
+
+```{r, fig.height = 3, fig.width = 6}
+
+plot_grid(ncol = 2, DimPlot(alldata, group.by = "orig.ident") + NoAxes() + NoLegend() + dimtheme,
+    DimPlot(alldata, group.by = "DF") + NoAxes()) + dimtheme
+
+
+```
+
+
+
+```{r df_dimplot, fig.height = 4, fig.width=4}
+
+DimPlot(alldata, group.by = "DF", split.by = "orig.ident", ncol = 6) + NoAxes() & 
+  theme(plot.title = element_text(size = 8),
+        strip.text = element_text(size = 8),
+        legend.position = "bottom") + dimtheme 
+
+```
+
+
+```{r df_violins, fig.height = 2, fig.width = 4}
+
+VlnPlot(alldata, features = "nFeature_RNA", group.by = "DF", pt.size = 0) + violintheme
+VlnPlot(alldata, features = "nFeature_RNA", split.by = "DF", group.by = "orig.ident", pt.size = 0)  &
+  theme(plot.title = element_text(size = 8),
+        axis.text = element_text(size = 8)) + violintheme
+
+
+```
+
+`r knitr::kable(table( alldata$orig.ident, alldata$DF))`
+
+```{r}
+
+alldata = alldata[, alldata@meta.data[, "DF"] == "Singlet"]
+
+```
+
+
+
+```{r cellcounts, fig.height = 3, fig.width = 4}
+
+cellfreq = as.data.frame(table(alldata$orig.ident), stringsAsFactors = FALSE)
+cellfreq$Type = alldata$Type[match(cellfreq$Var1, alldata$orig.ident)]
+ggplot(cellfreq, aes(x = Var1, y = Freq, color = Type)) + geom_point() +
+  theme_classic() +
+  theme(panel.background = element_blank(),
+        legend.key = element_blank(),
+        panel.grid.major.y = element_line(color = "#DDDDDD"),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Sample", y = "Number of cells")
+
+```
+
+
+```{r, fig.height = 3, fig.width = 6}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend() &
+  violintheme
+
+```
+
+
+```{r typeviolins, fig.height = 3, fig.width = 6}
+
+VlnPlot(alldata,
+        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Immune"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend() &
+  violintheme
+VlnPlot(alldata,
+        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Stroma"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend() &
+  violintheme
+VlnPlot(alldata,
+        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Epithelial"]),
+        group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
+    NoLegend() &
+  violintheme
+
+
+
+```
+
+
+
+
+```{r firstnormalize}
+
+if(!file.exists(paste0(owncache,"/firstnormalize.RData"))){
+
+alldata = NormalizeData(alldata)
+
+suppressWarnings(suppressMessages(alldata <- FindVariableFeatures(alldata, selection.method = "vst",
+    nfeatures = 2000, verbose = FALSE, assay = "RNA")))
+alldata <- ScaleData(alldata, vars.to.regress = c("percent_mito", "nFeature_RNA"),     assay = "RNA")
+
+alldata <- RunPCA(alldata, npcs = 50, reduction.name = "pca_raw")
+alldata <- RunUMAP(alldata, reduction = "pca_raw", dims = 1:30, n.components = 2, n.neighbors = 30,
+    n.epochs = 200, min.dist = 0.3, learning.rate = 1, spread = 1, reduction.name = "umap_raw")
+
+
+if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/firstnormalize.RData"))
+}
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/firstnormalize.RData"))
+}
+
+```
+
+
+```{r topgenes, fig.height = 3, fig.width = 5}
+
+top20 <- head(VariableFeatures(alldata), 20)
+
+LabelPoints(plot = VariableFeaturePlot(alldata), points = top20, repel = TRUE) +
+  theme(axis.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        axis.text = element_text(size = 8))
+
+```
+
+
+# PCA
+
+```{r firstpca, fig.height = 2, fig.width = 4}
+
+plot_grid(plot_grid(ncol = 3,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
+                  dims = 1:2, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
+                  dims = 3:4, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
+                  dims = 5:6, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme),
+          get_legend(DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
+                  dims = 1:2, shuffle = TRUE) + theme(legend.position = "bottom") + dimtheme),
+          ncol = 1, rel_heights = c(3,1)
+)
+plot_grid(plot_grid(ncol = 3,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
+                  dims = 1:2, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
+                  dims = 3:4, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme,
+          DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
+                  dims = 5:6, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme),
+          get_legend(DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
+                  dims = 1:2, shuffle = TRUE) + theme(legend.position = "bottom") + dimtheme),
+          ncol = 1, rel_heights = c(3,1))
+
+```
+
+```{r, fig.height = 3, fig.width = 6}
+
+VizDimLoadings(alldata, dims = 1:5, reduction = "pca_raw", ncol = 5, balanced = T) &
+  theme(axis.text = element_text(size = 8))
+
+```
+
+```{r, fig.height = 2, fig.width = 4}
+
+ElbowPlot(alldata, reduction = "pca_raw", ndims = 50) + 
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8))
+
+
+```
+
+
+# UMAP
+
+```{r firstumap, fig.height = 3, fig.width = 6}
+
+plot_grid(ncol = 3, DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident",
+                            shuffle = TRUE) + NoAxes() + NoLegend() + dimtheme,
+    DimPlot(alldata, reduction = "umap_raw", group.by = "Week",
+                            shuffle = TRUE) + NoAxes() + NoLegend() + dimtheme,
+    DimPlot(alldata, reduction = "umap_raw", group.by = "Type", label = TRUE,
+                            shuffle = TRUE) + NoAxes() + NoLegend() + dimtheme)
+
+```
+
+
+# Integrate data
+
+
+
+
+```{r normalizeintegrated}
+
+
+
+if(!file.exists(paste0(owncache,"/normalizeintegrated.RData"))){
+
+  if(!file.exists(paste0(owncache,"/fullintegration.RData"))){
+    
+    if(!file.exists(paste0(owncache,"/getanchors.RData"))){
+
+      alldata <- AddMetaData(alldata, gsub("_IMM","",gsub("_STR","",
+                                  gsub("_EPI","",alldata$orig.ident))), 
+                           "source")
+      data.list <- SplitObject(alldata, split.by = "source")
+      rm(alldata)
+      gc()
+      
+      message("object split")
+      
+      data.list = future_lapply(data.list, function(x){
+        message("sample")
+          x <- NormalizeData(x, verbose = FALSE)
+          x <- FindVariableFeatures(x, selection.method = "vst",
+              nfeatures = 2000, verbose = FALSE)
+          x
+      })
+      
+      message("data normalized")
+      
+      features <- SelectIntegrationFeatures(object.list = data.list)
+      
+      message("features selected")
+      
+      
+      data.list <- future_lapply(X = data.list, FUN = function(x) {
+        x <- ScaleData(x, features = features, verbose = FALSE)
+        x <- RunPCA(x, features = features, verbose = FALSE)
+      })
+      
+      message("pcas run")
+      
+      data.anchors <- FindIntegrationAnchors(object.list = data.list, 
+                                             dims = 1:30,
+          reduction = "rpca", anchor.features = features)
+      
+      message("anchors found")
+      
+      rm(data.list)
+      gc()
+      
+      
+      if(file.exists(owncache)){
+        save(data.anchors, file = paste0(owncache,"/getanchors.RData"))
+      }
+      
+      }else{
+        rm(alldata)
+        gc()
+        load(paste0(owncache,"/getanchors.RData"))
+      }
+    
+    
+    
+    alldata <- IntegrateData(anchorset = data.anchors, 
+                             dims = 1:30, new.assay.name = "RPCA")
+    rm(data.anchors)
+    gc()
+    if(file.exists(owncache)){
+      save(alldata, file = paste0(owncache,"/fullintegration.RData"))
+    }
+  }else{
+    rm(alldata)
+    gc()
+    load(paste0(owncache,"/fullintegration.RData"))
+  }
+  
+  
+  alldata <- ScaleData(alldata)
+  alldata <- RunPCA(alldata, npcs = 30)
+  alldata <- RunUMAP(alldata, dims = 1:30)
+  if(file.exists(owncache)){
+    save(alldata, file = paste0(owncache,"/normalizeintegrated.RData"))
+  }
+
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/normalizeintegrated.RData"))
+}
+
+```
+
+
+```{r, fig.height = 3, fig.width = 6}
+
+plot_grid(ncol = 3,
+
+
+  DimPlot(alldata, reduction = "pca", group.by = "orig.ident", shuffle = TRUE) +
+    NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
+  DimPlot(alldata, reduction = "umap", group.by = "orig.ident", shuffle = TRUE) +
+    NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme,
+  get_legend(DimPlot(alldata, reduction = "pca", group.by = "orig.ident", shuffle = TRUE) +
+    NoAxes() + ggtitle("PCA integrated") + dimtheme)
+)
+
+```
+
+
+```{r, fig.height = 6, fig.width = 6}
+
+DimPlot(alldata, reduction = "umap", split.by = "orig.ident", 
+        ncol = 6)+NoAxes() + NoLegend() & theme(strip.text= element_text(size = 8)) + 
+  dimtheme
+
+```
+
+
+```{r, fig.height = 3, fig.width = 3}
+
+DimPlot(alldata, reduction = "umap", group.by = "Genotype", 
+        shuffle = TRUE) + NoAxes() + dimtheme
+
+
+```
+
+# Plot QC in UMAP
+
+```{r, fig.height = 4, fig.width = 4}
+
+FeaturePlot(alldata, reduction = "umap",
+            features = qc_feats,
+    order = T, slot = "data", combine = T) & NoAxes() &
+  theme(plot.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
+
+```
+
+
+
+# Plot genes of interest
+
+
+
+
+
+```{r, fig.height = 4, fig.width = 4}
+
+DefaultAssay(alldata) = "RNA"
+
+FeaturePlot(alldata, reduction = "umap",
+            features = c("Mki67","Pcna", "Ptprc","Epcam"),
+    order = T, slot = "data", combine = T) & NoAxes() &
+  theme(plot.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
+
+DefaultAssay(alldata) = "RPCA"
+
+```
+
+
+# Clustering to identify sorting contaminations
+
+
+```{r}
+
+if(!file.exists(paste0(owncache,"/fullclustering.RData"))){
+
+
+  alldata@active.assay = "RPCA"
+  
+  alldata <- FindNeighbors(alldata, dims = 1:30,
+                           k.param = 350, prune.SNN = 1/15)
+  
+  alldata <- FindClusters(alldata, graph.name = "RPCA_snn",
+                          resolution = 0.25, algorithm = 1)
+  
+  alldata = AddMetaData(alldata, alldata$RPCA_snn_res.0.25,"RPCA_cluster")
+  alldata$seurat_clusters = NULL
+  alldata$RPCA_snn_res.0.25 = NULL
+  
+  save(alldata, file = paste0(owncache,"/fullclustering.RData"))
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/fullclustering.RData"))
+}
+
+
+```
+
+
+```{r, fig.height = 2, fig.width = 2}
+
+DimPlot(alldata, label = TRUE) + NoAxes() + NoLegend() + dimtheme
+
+```
+
+```{r, fig.height = 3, fig.width = 6}
+
+DefaultAssay(alldata) = "RNA"
+DotPlot(alldata, features = c("Epcam","Ptprc")) + coord_flip() + 
+  theme(legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8))
+DefaultAssay(alldata) = "RPCA"
+
+```
+
+
+```{r, fig.height = 3, fig.width = 5}
+
+ggplot(alldata@meta.data, aes(fill = Type, x = RPCA_cluster)) + geom_bar(position = "fill")
+
+ggplot(alldata@meta.data, aes(fill = orig.ident, x = RPCA_cluster)) +
+  geom_bar(position = "fill") 
+
+
+```
+
+
+```{r, fig.height = 3, fig.width = 6}
+
+VlnPlot(alldata, group.by = "RPCA_cluster", features = qc_feats, pt.size = 0, ncol = 2) &
+  theme(plot.title = element_text(size = 8),
+        axis.text = element_text(size = 8),
+        axis.title = element_blank()) + violintheme
+
+```
+
+
+
+# Data cleaning
+
+```{r cleandata}
+
+if(!file.exists(paste0(owncache,"/lastscale.RData")) |
+   !file.exists(paste0(datadir,"/../R_objects/immune_data.rds")) |
+   !file.exists(paste0(datadir,"/../R_objects/stroma_data.rds")) |
+   !file.exists(paste0(datadir,"/../R_objects/epithelial_data.rds"))){
+
+  
+  
+  immuneclusters = c(0,1,3,6,7,13,14,15,18)
+stromaclusters = c(2,4,8,9,10,12,16,17,20,21)
+epiclusters = c(5,11,19)
+
+sel.clust = "RPCA_cluster"
+
+alldata <- SetIdent(alldata, value = "Type")
+
+immunetype = WhichCells(alldata, ident = "Immune")
+stromatype = WhichCells(alldata, ident = "Stroma")
+epitype = WhichCells(alldata, ident = "Epithelial")
+
+alldata <- SetIdent(alldata, value = sel.clust)
+alldata$ident_clust = paste0(alldata@active.ident,"_",alldata$orig.ident)
+
+immunecells = WhichCells(alldata, ident = immuneclusters, cells = immunetype)
+stromacells = WhichCells(alldata, ident = stromaclusters, cells = stromatype)
+epicells = WhichCells(alldata, ident = epiclusters, cells = epitype)
+
+alldata = subset(alldata, cells = c(immunecells,stromacells, epicells))
+
+cleandata = alldata
+
+rm(alldata)
+
+gc()
+
+immunedata = subset(cleandata, cells = immunecells)
+immunedata@active.assay = "RNA"
+immunedata[["RPCA"]] = NULL
+immunedata[["FB"]] = subset(alldata_FB, cells = Cells(immunedata))[["FB"]]
+saveRDS(immunedata, paste0(datadir,"/../R_objects/immune_data.rds"))
+rm(immunedata)
+
+stromadata = subset(cleandata, cells = stromacells)
+stromadata@active.assay = "RNA"
+stromadata[["RPCA"]] = NULL
+saveRDS(stromadata, paste0(datadir,"/../R_objects/stroma_data.rds"))
+rm(stromadata)
+
+epidata = subset(cleandata, cells = epicells)
+epidata@active.assay = "RNA"
+epidata[["RPCA"]] = NULL
+saveRDS(epidata, paste0(datadir,"/../R_objects/epithelial_data.rds"))
+rm(epidata)
+
+gc()
+
+
+
+
+
+
+cleandata <- ScaleData(cleandata)
+cleandata <- RunPCA(cleandata, npcs = 30)
+cleandata <- RunUMAP(cleandata, dims = 1:30)
+save(cleandata, file = paste0(owncache,"/lastscale.RData"))
+}else{
+  rm(alldata)
+  gc()
+  load(paste0(owncache,"/lastscale.RData"))
+}
+```
+
+
+## UMAPs
+
+```{r dimplots,fig.height = 2, fig.width = 2}
+
+
+DimPlot(cleandata, reduction = "umap", label = TRUE,
+                        group.by = "RPCA_cluster", shuffle = TRUE) +
+            NoAxes() + labs(title = "Clustering") + NoLegend() + 
+  theme(plot.title = element_text(size = 10)) + dimtheme
+
+
+```
+
+
+
+
+```{r, fig.height = 3, fig.width=7}
+
+DimPlot(cleandata, reduction = "umap", split.by = "Type") +
+  NoAxes() + NoLegend() + dimtheme
+
+```
+
+
+
+
+```{r umaps, fig.height = 3, fig.width=3}
+
+typecolors = c(Stroma = "#F4DF9E",Immune = "#D6A7A0", Epithelial = "#A6D8DA")
+d_timecolors = scale_color_viridis_d(option = "viridis", direction = 1)
+modelcolors = c(WT = "#9E68B1", Il10KO = "#FCA549")
+
+
+
+DimPlot(cleandata, reduction = "umap", group.by = "Week", shuffle = TRUE) +
+            NoAxes() + d_timecolors + dimtheme
+DimPlot(cleandata, reduction = "umap", group.by = "Type", shuffle = TRUE) +
+            NoAxes() + labs(title = "Sort fraction") +
+             scale_color_manual(values = typecolors) + dimtheme
+
+
+DimPlot(cleandata, reduction = "umap", group.by = "Genotype", 
+                  shuffle = TRUE) +
+            NoAxes() + 
+             scale_color_manual(values = modelcolors) + dimtheme
+
+
+
+```
+
+
+
+
+# Session info
+
+```{r}
+
+sessionInfo()
+
+```

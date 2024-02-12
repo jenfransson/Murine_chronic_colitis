@@ -1,0 +1,397 @@
+---
+title: "Analysis of bulk RNA seq in chronic and acute murine colitis"
+author: "Jennifer Fransson"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    toc: yes
+  bookdown::html_document2:
+    code_folding: hide
+    toc: yes
+    toc_float:
+      collapsed: no
+  html_document:
+    df_print: paged
+    toc: yes
+params:
+  dataset: 1
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r Setup, echo = FALSE}
+knitr::opts_chunk$set(results    = "hold",
+                      message    = FALSE,
+                      warning    = FALSE)
+
+if(!knitr::is_html_output()){
+  my_plot_hook <- function(x, options)
+   paste("\n", knitr::hook_plot_tex(x, options), "\n")
+  knitr::knit_hooks$set(plot = my_plot_hook)
+}
+```
+
+
+
+# Introduction
+
+This script describes the analyses performed to compare disease process of T cell transfer colitis and Il10^-/-^ colitis for the study "The Spatiotemporal Transcriptomic Landscape in Murine Chronic Colitis". The datasets used here have been generated in the scripts Il10KO_bulk.html, TcellTransfer_bulk_Rag2.html, and TcellTransfer_bulk_SCID.html. In addition, a dataset previously published by Czarnewski et al (Nat Comm, 2019) was downloaded from [here](https://github.com/czarnewski/uc_classification).
+
+# Load libraries and other scripts
+
+In addition to the packages loaded, an extra script (bulk_functions.R) is sourced prior to analysis. This script contains functions and parameters for visualization that are used for this analysis as well as the analysis of T cells transfer bulk RNAseq.
+
+```{r}
+
+library(ggplot2)
+library(cowplot)
+library(grid)
+library(mgcv)
+library(rafalib)
+library(edgeR)
+library(reshape2)
+library(enrichR)
+library(ggvenn)
+library(data.table)
+library(ggpubr)
+library(progeny)
+library(pheatmap)
+library(igraph)
+library(ggraph)
+
+
+source("../code/Bulk/bulk_functions.R")
+datadir = "../data/Bulk/"
+
+
+gtheme = theme(legend.key.size = unit(10,"pt"), legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8), legend.margin = margin(0,0,0,0),
+        legend.spacing = unit(2,"pt"))
+
+
+```
+
+# Read datasets
+
+```{r}
+
+# Identify genes originally present in all datasets
+
+presentgenes= read.csv2("../data/BulkCommonGenes.csv")$gene
+
+
+```
+
+
+```{r}
+
+
+IL10_DE = read.csv2(paste0(datadir,"Il10KO/DE_modules.csv"), row.names = 1)
+Rag2_DE = read.csv2(paste0(datadir,"TCellTransfer_Rag2/DE_modules.csv"), row.names = 1)
+SCID_DE = read.csv2(paste0(datadir,"TCellTransfer_SCID/DE_modules.csv"), row.names = 1)
+IL10_DE$GeneName = rownames(IL10_DE)
+Rag2_DE$GeneName = rownames(Rag2_DE)
+SCID_DE$GeneName = rownames(SCID_DE)
+
+dss_modules = read.csv("https://github.com/czarnewski/uc_classification/blob/master/processed_files/gene_modules.csv?raw=TRUE")
+colnames(dss_modules) = c("GeneName","module")
+
+dss_de = read.csv("https://github.com/czarnewski/uc_classification/blob/master/processed_files/DEgenes.csv?raw=TRUE")
+colnames(dss_de)[1] = "GeneName"
+
+DSS_DE = merge(dss_modules, dss_de, by = "GeneName")
+
+
+de_res_modules = lapply(list(IL10_DE, SCID_DE, Rag2_DE, DSS_DE), function(x){
+  x = x[x$GeneName %in% presentgenes,]
+  x = x[!is.na(x$module),]
+  x
+})
+names(de_res_modules) = c("il10","scid","rag2","dss")
+
+
+```
+
+
+```{r, fig.height = 3, fig.width = 3}
+
+full_v = ggvenn(lapply(de_res_modules, function(x){
+  x$GeneName}),
+  c("il10","scid","rag2","dss"), show_percentage = FALSE)
+
+full_v
+
+
+```
+
+```{r}
+
+IL10_DE_DF = read.csv2(paste0(datadir,"Il10KO/Human_DE.csv"), row.names = 1)
+Rag2_DE_DF = read.csv2(paste0(datadir,"TCellTransfer_Rag2/Human_DE.csv"), row.names = 1)
+SCID_DE_DF = read.csv2(paste0(datadir,"TCellTransfer_SCID/Human_DE.csv"), row.names = 1)
+
+mousemodules = DSS_DE
+
+homologs <- fread('http://www.informatics.jax.org/downloads/reports/HMD_HumanPhenotype.rpt')
+homologs <- data.frame("mouse"=homologs$V3, "human"=homologs$V1)
+
+mouse_human = homologs[match(rownames(mousemodules), homologs$mouse),]
+mouse_human = mouse_human[!is.na(mouse_human$mouse),]
+
+mouse_human$cluster = mousemodules$module[match(mouse_human$mouse, rownames(mousemodules))]
+
+DSS_DE_DF = getHumanDEs(mouse_human, homologs)
+
+DSS_DE_DF$mousemodule = mouse_human[match(DSS_DE_DF$mouse, mouse_human$mouse),"module"]
+
+```
+
+
+```{r, fig.height = 3, fig.width = 3}
+
+combined_DE_DF = unique(do.call("rbind",
+        lapply(list(IL10_DE_DF, Rag2_DE_DF, SCID_DE_DF, DSS_DE_DF), function(x){
+  x[,c("mouse", "human", "Taman_UC_logFC", "Lloyd_UC_logFC",
+       "Taman_UC_reg", "Lloyd_UC_reg")]
+})))
+
+combined_DE_DF$UC = (!is.na(combined_DE_DF$Lloyd_UC_reg) &
+                       !is.na(combined_DE_DF$Taman_UC_reg))
+
+uc_v = ggvenn(lapply(de_res_modules, function(x){
+  x[x$GeneName %in% combined_DE_DF$mouse[combined_DE_DF$UC],"GeneName"]}),
+  c("il10","scid","rag2","dss"), show_percentage = FALSE)
+
+uc_v
+
+```
+
+
+```{r, fig.width = 6, fig.height = 2}
+
+n_v = full_v$layers[[4]]$data$n
+names(n_v) = full_v$layers[[4]]$data$name
+
+full_matrix = matrix(
+  c(0, n_v[c("B","AB","A",
+             "C","BC","ABC","AC",
+             "CD","BCD","ABCD","ACD",
+             "D","BD","ABD","AD")]),
+  ncol = 4, nrow = 4)
+
+colnames(full_matrix) = gsub("C","Rag2",gsub("D","DSS",c("0","C","C&D","D")))
+rownames(full_matrix) = gsub("A","Il10",gsub("B","SCID",c("0","B","A&B","A")))
+
+full_melt = merge(reshape2::melt(full_matrix, value.name = "full_n"),
+                  reshape2::melt(full_matrix/sum(full_matrix), 
+                                 value.name = "full_prop"))
+
+n_v = uc_v$layers[[4]]$data$n
+names(n_v) = uc_v$layers[[4]]$data$name
+
+uc_matrix = matrix(
+  c(0, n_v[c("B","AB","A",
+             "C","BC","ABC","AC",
+             "CD","BCD","ABCD","ACD",
+             "D","BD","ABD","AD")]),
+  ncol = 4, nrow = 4)
+
+colnames(uc_matrix) = gsub("C","Rag2",gsub("D","DSS",c("0","C","C&D","D")))
+rownames(uc_matrix) = gsub("A","Il10",gsub("B","SCID",c("0","B","A&B","A")))
+
+uc_melt = merge(reshape2::melt(uc_matrix, value.name = "uc_n"),
+reshape2::melt(uc_matrix/sum(uc_matrix), value.name = "uc_prop"))
+
+combined_melt = merge(full_melt, uc_melt)
+
+combined_melt$Var1 = factor(combined_melt$Var1,
+                            levels = rev(rownames(uc_matrix)))
+
+ggplot(combined_melt, aes(x = Var2, y = Var1)) +
+  geom_point(aes(size = full_n, fill = uc_n/full_n*100), shape = 21) + 
+  scale_size_continuous(range = c(0,10)) + 
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_blank(),
+        legend.direction = "horizontal",
+        plot.title = element_text(size = 10)) +
+  scale_x_discrete(position = "top") + gtheme + 
+  scale_fill_gradient(low = "white",high = "#8888FF", limits = c(0,NA),
+                      breaks = c(0,5,10,15)) + 
+  labs(title = "Proportion UC DE genes out of TCT genes",
+       size = "# DE mouse genes",
+       fill = "% genes with\nDE homolog in UC")
+
+
+```
+
+```{r}
+
+allsig = do.call("rbind",lapply(names(de_res_modules), function(x){
+  y = de_res_modules[[x]][,Reduce(intersect,lapply(de_res_modules, colnames))]
+  y$model = x
+  y
+}))
+
+allsig$inUC = factor(allsig$GeneName %in% combined_DE_DF$mouse[combined_DE_DF$UC],
+                     levels = c("TRUE","FALSE"))
+
+percentages = data.frame(true = table(allsig$model, allsig$inUC)[,1],
+           false = table(allsig$model, allsig$inUC)[,2])
+percentages$sum = percentages$true + percentages$false
+percentages$perc = percentages$true/percentages$sum*100
+percentages$model = factor(rownames(percentages), levels = rev(rownames(percentages)))
+
+ggplot(allsig, aes(x = factor(model, levels = levels(percentages$model)))) + 
+  geom_bar(aes(fill = inUC)) + gtheme + 
+  scale_fill_manual(values = c("#CCCCCC", "#AAAAAA")) +
+  theme(axis.text = element_text(size = 8),
+        axis.ticks.x = element_line(color = "black"),
+        panel.background = element_blank(),
+        panel.grid = element_blank(),
+        panel.grid.major.y = element_line(color = "black")) + 
+  labs(x = "Model") +
+  geom_text(data = percentages, 
+            aes(y = sum-true/2,
+                label = paste0("DE in UC: ",true," (",signif(perc,2),"%)")),
+            hjust = 0.5, vjust = 0.5) + 
+  scale_y_continuous(breaks = c(0,2000,4000,6000), limits = c(0,6500), name = "count")
+
+
+```
+
+```{r, fig.height = 2, fig.width = 6}
+
+plot_grid(plotlist = lapply(unique(allsig$model), function(model){
+  ggplot(allsig[allsig$model == model,],
+         aes(x = inUC, y = -log10(FDR))) + 
+    geom_jitter(shape = 16, alpha = 0.5, stroke = NA, size = 1) + 
+    geom_boxplot(outlier.size = -1,
+                 color = "red",
+                 alpha = 0.2) + 
+    labs(title = model, x = "DE in UC", y = "-log10(FDR)") + 
+    gtheme + 
+    stat_compare_means(method = "wilcox", aes(y = FDR)) +
+    theme(axis.text = element_text(size = 8),
+          axis.ticks.y = element_line(color = "black"),
+          legend.title = element_blank(),
+          plot.title = element_text(size = 8),
+          plot.margin = margin(2,2,2,2,"pt"))}),
+  ncol = 4, align = "h")
+
+```
+
+
+```{r}
+
+
+uc_conserved = lapply(de_res_modules, function(x){
+  x[x$GeneName %in% combined_DE_DF$mouse[combined_DE_DF$UC],"GeneName"]})
+
+conserved = intersect(uc_conserved[[1]], 
+          intersect(uc_conserved[[2]], 
+                    intersect(uc_conserved[[3]],
+                              uc_conserved[[4]])))
+
+write.csv2(combined_DE_DF[combined_DE_DF$mouse %in% conserved,], 
+           paste0(datadir,"uc_conserved_table.csv"), 
+           row.names = FALSE)
+
+conserved_go = enrichr(conserved, databases = "GO_Biological_Process_2021")
+
+
+top10_uc = conserved_go$GO_Biological_Process_2021[1:10,]
+
+top10_uc$log10p = -log10(top10_uc$Adjusted.P.value)
+
+top10_uc$Name = gsub(" \\(.*","",top10_uc$Term)
+top10_uc$GOID = gsub(".*\\(","",gsub("\\)","",top10_uc$Term))
+top10_uc$GeneList = sapply(strsplit(top10_uc$Genes,";"), 
+                           paste, collapse = ", ")
+
+uc_go_edges = as.data.frame(do.call("rbind",lapply(1:10, function(i){
+  do.call("rbind",
+          lapply(strsplit(top10_uc$Genes[i], ";")[[1]], function(g){
+            c(from = top10_uc$Name[i], to = g)
+          }))
+})))
+
+genes = lapply(1:10, function(i){
+          strsplit(top10_uc$Genes[i], ";")[[1]]
+})
+
+uc_gene_nodes = data.frame(Name = unique(uc_go_edges$to),
+           GOID = unique(uc_go_edges$to), 
+           Overlap = NA,
+           log10p = NA)
+
+uc_gene_nodes$Type = "Gene"
+top10_uc$Type = "GO_Term"
+
+uc_go_nodes = rbind(top10_uc[,c("Name", "GOID", "Overlap", "log10p","Type")],
+                    uc_gene_nodes)
+
+
+write.csv(uc_go_edges, 
+          paste0(datadir, "uc_conserved_go_edges.csv"),
+          quote = FALSE, row.names = FALSE)
+write.csv(uc_go_nodes, 
+          paste0(datadir, "uc_conserved_go_nodes.csv"),
+          quote = FALSE, row.names = FALSE)
+
+uc_go_edges$from = gsub("ted sign", "ted\nsign",
+                     gsub("to ","to\n",
+                          gsub("of ","of\n",
+                               gsub(" \\(.*","",uc_go_edges$from))))
+
+uc_go_nodes$Name = gsub("ted sign", "ted\nsign",
+                     gsub("to ","to\n",
+                          gsub("of ","of\n",
+                               gsub(" \\(.*","",uc_go_nodes$Name ))))
+
+
+
+```
+
+Top 10 enriched GO Biological Process terms in `r length(conserved)` conserved genes:
+
+`r knitr::kable(top10_uc[,c("Term","Adjusted.P.value","GeneList")])`
+
+
+```{r, fig.height = 6}
+
+ig <- graph_from_data_frame(d=uc_go_edges, vertices=uc_go_nodes, directed = FALSE)
+
+tg <- tidygraph::as_tbl_graph(ig) %>% 
+  tidygraph::activate(nodes) %>% 
+  dplyr::mutate(label=name)
+
+
+```
+
+```{r, fig.height = 6}
+
+
+tg %>%
+   ggraph(layout = "fr") +
+   geom_edge_arc(colour= "gray50",
+                 lineend = "round",
+                 strength = 0,
+                 alpha = .3) +
+   geom_node_point(aes(size = Type),
+                   color = "grey") +
+   geom_node_text(aes(label = name), 
+                  repel = FALSE,  
+                  colour="gray10") +
+  theme_graph(background = "white") +
+  scale_edge_width(range = c(0.2, 2.5)) + 
+    theme_graph(base_family = 'Helvetica', base_size = 8) +
+  gtheme
+
+```
+
+```{r}
+
+sessionInfo()
+
+```
+

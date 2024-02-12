@@ -32,7 +32,7 @@ if(!knitr::is_html_output()){
 
 # Introduction
 
-This script describes the analyses performed to describe the disease process of T cell transfer colitis in SCID background mice for the study "The Spatiotemporal Transcriptomic Landscape in Murine Chronic Colitis". The data analyzed are bulk RNA-sequenced biopsies of distal colon. Samples were collected from Il10-/- mice at 5 time points (weeks 6, 8, 10, 12 and 14) and WT mice at week 6. 
+This script describes the analyses performed to describe the disease process of murine Il10-/- colitis for the study "The Spatiotemporal Transcriptomic Landscape in Murine Chronic Colitis". The data analyzed are bulk RNA-sequenced biopsies of distal colon. Samples were collected from Il10-/- mice at 5 time points (weeks 6, 8, 10, 12 and 14) and WT mice at week 6. 
 
 # Load libraries and other scripts
 
@@ -450,15 +450,18 @@ genes = names(groups)
 groups = match(groups, c(1,2,3,4,5))
 names(groups) = genes
 
-TCTcolors = gg_color_hue(max(groups))
-names(TCTcolors) = 1:length(TCTcolors)
+mousecolors = gg_color_hue(max(groups))
+names(mousecolors) = 1:length(mousecolors)
+
+timelrt$module = groups[rownames(timelrt)]
+write.csv2(timelrt, paste0(datadir, "DE_modules.csv"))
 
 ```
 
 ```{r}
 
 myplclust(geneCluster, labels=rep("-", length(groups)),
-          lab.col = TCTcolors[groups])
+          lab.col = mousecolors[groups])
 abline( h=height_cut, col="red", lwd=0.5)
 
 ```
@@ -488,7 +491,7 @@ for(i in sort(unique(groups))){
   linelist[[i]] = ggplot(clf01long, aes(x = Week, y = value)) + 
     geom_line(aes(group = Gene), alpha = 0.4) +  
     labs(title = paste("Module",i)) + 
-    stat_summary(geom="line", color = TCTcolors[i], 
+    stat_summary(geom="line", color = mousecolors[i], 
                  size = 2, fun = mean, group = 1) + 
     theme(plot.title = element_text(size = 10),
           axis.text = element_text(size = 8),
@@ -762,10 +765,10 @@ The mouse homologs of these genes are extracted from the [MGI homolog database](
 
 ```{r}
 
-TCTmodules = as.data.frame(logFCs01)
-TCTmodules$cluster = groups[rownames(TCTmodules)]
+mousemodules = as.data.frame(logFCs01)
+mousemodules$cluster = groups[rownames(mousemodules)]
 
-TCTorder = sort(unique(TCTmodules$cluster))
+mouseorder = sort(unique(mousemodules$cluster))
 
 ```
 
@@ -776,12 +779,12 @@ if(!file.exists(paste0(datadir,"/human_DE.csv"))){
   homologs <- fread('http://www.informatics.jax.org/downloads/reports/HMD_HumanPhenotype.rpt')
   homologs <- data.frame("mouse"=homologs$V3, "human"=homologs$V1)
   
-  TCT_human = homologs[match(rownames(TCTmodules), homologs$mouse),]
-  TCT_human = TCT_human[!is.na(TCT_human$mouse),]
+  mouse_human = homologs[match(rownames(mousemodules), homologs$mouse),]
+  mouse_human = mouse_human[!is.na(mouse_human$mouse),]
   
-  TCT_human$cluster = TCTmodules$cluster[match(TCT_human$mouse, rownames(TCTmodules))]
+  mouse_human$cluster = mousemodules$cluster[match(mouse_human$mouse, rownames(mousemodules))]
   
-  DE_DF = getHumanDEs(TCT_human, homologs)
+  DE_DF = getHumanDEs(mouse_human, homologs)
   
   write.csv2(DE_DF, paste0(datadir,"Human_DE.csv"))
 }else{
@@ -796,7 +799,7 @@ if(!file.exists(paste0(datadir,"/human_DE.csv"))){
 gv = ggvenn(list(Taman_UC = unique(DE_DF$mouse[!is.na(DE_DF$Taman_UC_reg)]),
             Lloyd_UC= unique(DE_DF$mouse[!is.na(DE_DF$Lloyd_UC_reg)]),
             CD= unique(DE_DF$mouse[!is.na(DE_DF$Lloyd_CD_reg)]),
-            SCID = unique(DE_DF$mouse[!is.na(DE_DF$TCTmodule)])),
+            SCID = unique(DE_DF$mouse[!is.na(DE_DF$mousemodule)])),
        show_percentage = FALSE)
 
 gv$coordinates$clip = "off"
@@ -843,15 +846,15 @@ For each group of conserved genes, the number and regulation of the genes in hum
 
 ```{r, fig.height = 2.5, fig.width = 7}
 
-plot_grid(ggplot(DE_DF[apply(DE_DF[,c("UC","TCTmodule")], 1, function(x){all(!is.na(x))}),], 
-                 aes(x = TCTmodule)) + geom_bar(aes(fill = as.factor(UC)))  + 
+plot_grid(ggplot(DE_DF[apply(DE_DF[,c("UC","mousemodule")], 1, function(x){all(!is.na(x))}),], 
+                 aes(x = mousemodule)) + geom_bar(aes(fill = as.factor(UC)))  + 
   labs(title = "UC conserved genes", fill = "UC regulation", x = "SCID module") +
-    bartheme_human + scale_x_continuous(breaks = TCTorder) + 
+    bartheme_human + scale_x_continuous(breaks = mouseorder) + 
     theme(axis.text.y = element_text(size = 8)),
-  ggplot(DE_DF[apply(DE_DF[,c("UC","TCTmodule")], 1, function(x){all(!is.na(x))}),], 
-         aes(x = TCTmodule)) + geom_bar(aes(fill = as.factor(UC)), position = "fill")  + 
+  ggplot(DE_DF[apply(DE_DF[,c("UC","mousemodule")], 1, function(x){all(!is.na(x))}),], 
+         aes(x = mousemodule)) + geom_bar(aes(fill = as.factor(UC)), position = "fill")  + 
   labs(title = "UC conserved genes", fill = "UC regulation", x = "SCID module", y = "Proportion") +
-    bartheme_human + scale_x_continuous(breaks = TCTorder) + 
+    bartheme_human + scale_x_continuous(breaks = mouseorder) + 
     theme(axis.text.y = element_text(size = 8)),
 ncol = 2)
 
@@ -863,7 +866,7 @@ The distributions of p-values in mouse DEGs for conserved and non-conserved gene
 ```{r, fig.height=2, fig.width=3}
 
 
-DE_DF$TCT_FDR = timelrt$FDR[match(DE_DF$mouse, rownames(timelrt))]
+DE_DF$mouse_FDR = timelrt$FDR[match(DE_DF$mouse, rownames(timelrt))]
 
 plottext = element_text(size = 8)
 plottheme = theme(axis.text = plottext,
@@ -871,14 +874,14 @@ plottheme = theme(axis.text = plottext,
 
 
 plot_grid(
-ggplot(DE_DF[!is.na(DE_DF$TCTmodule),], aes(x = !is.na(UC), y = -log10(TCT_FDR))) +
+ggplot(DE_DF[!is.na(DE_DF$mousemodule),], aes(x = !is.na(UC), y = -log10(mouse_FDR))) +
   stat_compare_means(method = "wilcox", label = "p.signif", 
                      comparisons = list(c("TRUE","FALSE"))) + 
   plottheme + scale_y_continuous(expand = expansion(mult = c(0,0.1))) + 
   geom_point(position = "jitter", size = 0.1, alpha =0.3, shape = 16)  +
   geom_boxplot(outlier.size = -1, alpha = 0.5, color = "#7F79B7")
 ,
-ggplot(DE_DF[!is.na(DE_DF$TCTmodule),], aes(x = !is.na(IBD), y = -log10(TCT_FDR))) + 
+ggplot(DE_DF[!is.na(DE_DF$mousemodule),], aes(x = !is.na(IBD), y = -log10(mouse_FDR))) + 
   stat_compare_means(method = "wilcox", label = "p.signif", 
                      comparisons = list(c("TRUE","FALSE"))) + 
   plottheme + scale_y_continuous(expand = expansion(mult = c(0,0.1))) + 

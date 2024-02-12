@@ -33,7 +33,7 @@ vignettes/*.pdf
 # knitr and R markdown default cache directories
 *_cache/
 *_files/
-data/SingleCell/*/cache/
+data/SingleCell/*/cache*/
 
 # Temporary files created by R markdown
 *.utf8.md
@@ -54,7 +54,17 @@ rsconnect/
 
 # Processed data files
 data/*rds
+data/Bulk/uc_conserved*.csv
+data/SingleCell/*/R_objects
+
 
 # Raw data files
-data/SingleCell/TcellTransfer/expression_matrices/
+data/SingleCell/Il10KO/expression_matrices*
+data/SingleCell/TcellTransfer/expression_matrices*
 data/Bulk/mouseKEGG.rds
+
+
+
+# Tests
+scripts/tests
+scripts/*.pdf

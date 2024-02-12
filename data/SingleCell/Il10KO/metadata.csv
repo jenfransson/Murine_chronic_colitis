@@ -1,0 +1,19 @@
+﻿*library name;*title;*organism;**tissue;**cell type;genotype;time
+BALBc_6W_EPI;Colon, WT W6, Epithelial fraction, gene expression;mus musculus;colon;Epithelial;WT;W6
+BALBc_6W_IMM;Colon, WT W6, Immune fraction, gene expression;mus musculus;colon;Immune;WT;W6
+BALBc_6W_STR;Colon, WT W6, Stromal fraction, gene expression;mus musculus;colon;Stroma;WT;W6
+IL10_6W_EPI;Colon, Il10KO W6, Epithelial fraction, gene expression;mus musculus;colon;Epithelial;Il10KO;W6
+IL10_6W_IMM;Colon, Il10KO W6, Immune fraction, gene expression;mus musculus;colon;Immune;Il10KO;W6
+IL10_6W_STR;Colon, Il10KO W6, Stromal fraction, gene expression;mus musculus;colon;Stroma;Il10KO;W6
+G_8W_EPI;Colon, Il10KO W8, Epithelial fraction, gene expression;mus musculus;colon;Epithelial;Il10KO;W8
+G_8W_IMM;Colon, Il10KO W8, Immune fraction, gene expression;mus musculus;colon;Immune;Il10KO;W8
+G_8W_STR;Colon, Il10KO W8, Stromal fraction, gene expression;mus musculus;colon;Stroma;Il10KO;W8
+G_10W_EPI;Colon, Il10KO W10, Epithelial fraction, gene expression;mus musculus;colon;Epithelial;Il10KO;W10
+G_10W_IMM;Colon, Il10KO W10, Immune fraction, gene expression;mus musculus;colon;Immune;Il10KO;W10
+G_10W_STR;Colon, Il10KO W10, Stromal fraction, gene expression;mus musculus;colon;Stroma;Il10KO;W10
+G_12W_EPI;Colon, Il10KO W12, Epithelial fraction, gene expression;mus musculus;colon;Epithelial;Il10KO;W12
+G_12W_IMM;Colon, Il10KO W12, Immune fraction, gene expression;mus musculus;colon;Immune;Il10KO;W12
+G_12W_STR;Colon, Il10KO W12, Stromal fraction, gene expression;mus musculus;colon;Stroma;Il10KO;W12
+G_14W_EPI;Colon, Il10KO W14, Epithelial fraction, gene expression;mus musculus;colon;Epithelial;Il10KO;W14
+G_14W_IMM;Colon, Il10KO W14, Immune fraction, gene expression;mus musculus;colon;Immune;Il10KO;W14
+G_14W_STR;Colon, Il10KO W14, Stromal fraction, gene expression;mus musculus;colon;Stroma;Il10KO;W14

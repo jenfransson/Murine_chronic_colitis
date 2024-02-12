@@ -29,23 +29,52 @@ knitr::opts_chunk$set(fig.width  = 10,
 library(Seurat)
 library(ggplot2)
 library(cowplot)
+library(clustree)
 
 library(future)
-plan("multisession", workers = 20)
-options(future.globals.maxSize = 256 * 1024^3)
+plan("sequential")
 
-source("color_list.R")
-source("../code/SingleCell/NMFsetup.R")
+source("../code/SingleCell/color_list.R")
+source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
 
 
 ```
 
+```{r}
+ 
+datadir = "../data/SingleCell/TcellTransfer/R_objects/"
 
-# Load data
+owncache = "../data/SingleCell/TcellTransfer/cache_immune/"
 
-```{r loaddata, cache = TRUE}
+violintheme = theme(axis.text = element_text(size = 8),
+        plot.title = element_text(size = 8),
+        legend.key.size = unit(8, "pt"),
+        axis.title = element_blank())
+dimtheme = theme(legend.text = element_text(size = 8),
+        plot.title = element_text(size = 8),
+        legend.key.size = unit(8, "pt"))
 
-alldata <- readRDS("../data/SingleCell/TcellTransfer/R_objects/immune_data.rds")
+qc_feats <- c("nFeature_RNA", "nCount_RNA", "percent_mito", "percent_ribo")
+
+```
+
+```{r, include = FALSE}
+
+if(file.exists(owncache)){
+  message(paste0("Intermediate data files will be loaded from and saved to ",owncache))
+}else{
+  message("Intermediate data files will not be saved or loaded")
+}
+
+```
+
+# Initial data 
+
+
+```{r loaddata}
+
+if(!file.exists(paste0(owncache,"first_dr.RData"))){
+  alldata = readRDS(paste0(datadir,"immune_data.rds"))
 
 DefaultAssay(alldata) = "RNA"
 
@@ -55,230 +84,301 @@ suppressWarnings(
                                    nfeatures = 2000, verbose = FALSE,
                                    assay = "RNA")))
 
-alldata <- ScaleData(alldata, vars.to.regress = c("percent_mito", "nFeature_RNA"), 
-    assay = "RNA", reduction.name = "pca_raw")
-alldata <- RunPCA(alldata, npcs = 50, verbose = F)
-alldata <- RunTSNE(alldata, reduction = "pca_raw", dims = 1:30, 
-                   perplexity = 30, max_iter = 1000, 
-    theta = 0.5, eta = 200, num_threads = 0, reduction.name = "tsne_raw")
-alldata <- RunUMAP(alldata, reduction = "pca_raw", dims = 1:30, 
-                   n.components = 2, n.neighbors = 30, 
-    n.epochs = 200, min.dist = 0.3, learning.rate = 1, 
-    spread = 1, reduction.name = "umap_raw")
+  alldata <- ScaleData(alldata, vars.to.regress = c("percent_mito", "nFeature_RNA"), 
+      assay = "RNA", reduction.name = "pca")
+  alldata <- RunPCA(alldata, npcs = 50, verbose = F)
+  alldata <- RunUMAP(alldata, reduction = "pca", dims = 1:30, 
+                     n.components = 2, n.neighbors = 30, 
+      n.epochs = 200, min.dist = 0.3, learning.rate = 1, 
+      spread = 1, reduction.name = "umap")
+  
+  if(file.exists(owncache)){
+    save(alldata, file = paste0(owncache,"first_dr.RData"))
+  }
+}else{
+  load(paste0(owncache,"first_dr.RData"))
+}
+
 
 ```
 
 
+# Plot QC vars
+
+Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
+
+```{r qc, fig.height=4, fig.width=6}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
+  violintheme
+
+```
+
 # Highly variable features
 
-```{r}
+```{r topgenes, fig.height = 3, fig.width = 5}
 
 top20 <- head(VariableFeatures(alldata), 20)
+lp = LabelPoints(plot = VariableFeaturePlot(alldata), points = top20, repel = TRUE) +
+  theme(axis.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        axis.text = element_text(size = 8))
 
-LabelPoints(plot = VariableFeaturePlot(alldata), 
-            points = top20, repel = TRUE)
+lp$layers[[2]]$aes_params$size = 3
+
+lp
 
 ```
 
 # PCA
 
-```{r}
+```{r, fig.height = 3, fig.width = 6}
 
 plot_grid(ncol = 3, 
-          DimPlot(alldata, reduction = "pca_raw", 
-                  group.by = "orig.ident", dims = 1:2) + NoLegend(),
-          DimPlot(alldata, reduction = "pca_raw", 
-                  group.by = "orig.ident", dims = 3:4) + NoLegend(),
-          DimPlot(alldata, reduction = "pca_raw", 
-                  group.by = "orig.ident", dims = 5:6) + NoLegend())
-
-
-VizDimLoadings(alldata, dims = 1:5, reduction = "pca_raw", ncol = 5, balanced = T)
-
-ElbowPlot(alldata, reduction = "pca_raw", ndims = 50)
-
-```
-
-# t-SNE
-
-```{r}
-
-plot_grid(ncol = 2, DimPlot(alldata, reduction = "tsne_raw", 
-                            group.by = "orig.ident") + NoLegend(), 
-          DimPlot(alldata, reduction = "tsne_raw", group.by = "Time"))
+          DimPlot(alldata, reduction = "pca", group.by = "orig.ident", 
+                  dims = 1:2, shuffle = TRUE) +
+            NoLegend() + dimtheme + 
+            theme(axis.text = element_text(size = 8),
+                  axis.title = element_text(size = 8)),
+          DimPlot(alldata, reduction = "pca", group.by = "orig.ident", 
+                  dims = 3:4, shuffle = TRUE) + 
+            NoLegend() + dimtheme + 
+            theme(axis.text = element_text(size = 8),
+                  axis.title = element_text(size = 8)),
+          DimPlot(alldata, reduction = "pca", group.by = "orig.ident",
+                  dims = 5:6, shuffle = TRUE) + 
+            NoLegend() + dimtheme + 
+            theme(axis.text = element_text(size = 8),
+                  axis.title = element_text(size = 8)))
 
 ```
 
+
+```{r, fig.height = 3, fig.width = 6}
+
+VizDimLoadings(alldata, dims = 1:5, reduction = "pca", ncol = 5, balanced = T) &
+  theme(axis.text = element_text(size = 8), axis.title = element_text(size = 8))
+
+```
+
+
+```{r, fig.height = 2, fig.width = 4}
+
+ElbowPlot(alldata, reduction = "pca", ndims = 50) + 
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8))
+
+```
 
 # UMAP
 
-```{r}
+```{r firstumap, fig.height = 3, fig.width = 6}
 
-plot_grid(ncol = 2, DimPlot(alldata, reduction = "pca_raw", 
-                            group.by = "orig.ident") + NoLegend(), 
-    DimPlot(alldata, reduction = "tsne_raw", 
-            group.by = "orig.ident") + NoLegend(), 
-    DimPlot(alldata, reduction = "umap_raw", 
-            group.by = "orig.ident") + NoLegend())
+plot_grid(ncol = 2, DimPlot(alldata, reduction = "pca", raster = TRUE,
+                            group.by = "orig.ident", shuffle = TRUE) + 
+            NoLegend() + NoAxes() + dimtheme, 
+    DimPlot(alldata, reduction = "umap", group.by = "orig.ident", raster = TRUE,
+            shuffle = TRUE) +
+      NoLegend() + NoAxes() + dimtheme)
 
+plot_grid(ncol = 2, DimPlot(alldata, reduction = "umap", raster = TRUE,
+                            group.by = "orig.ident", shuffle = TRUE) +
+            theme(legend.position = "bottom") + NoAxes() + dimtheme, 
+          DimPlot(alldata, reduction = "umap", raster = TRUE,
+                  group.by = "Model", shuffle = TRUE) +
+            theme(legend.position = "bottom") + NoAxes() + dimtheme)
 
-plot_grid(ncol = 2, DimPlot(alldata, reduction = "pca_raw", 
-                            group.by = "Model"), 
-    DimPlot(alldata, reduction = "tsne_raw", 
-            group.by = "Model"), 
-    DimPlot(alldata, reduction = "umap_raw", 
-            group.by = "Model"))
+plot_grid(ncol = 2, DimPlot(alldata, reduction = "umap", raster = TRUE,
+                  group.by = "Treatment", shuffle = TRUE) +
+            theme(legend.position = "bottom") + NoAxes() + dimtheme,
+          DimPlot(alldata, reduction = "umap", raster = TRUE,
+                  group.by = "RPCA_cluster", label = TRUE, shuffle = TRUE) + 
+            NoLegend() + NoAxes() + dimtheme)
 
-
-plot_grid(ncol = 2, DimPlot(alldata, reduction = "umap_raw", 
-                            group.by = "orig.ident") + 
-            NoLegend(), 
-          DimPlot(alldata, reduction = "umap_raw", group.by = "Model"), 
-          DimPlot(alldata, reduction = "umap_raw", group.by = "Treatment"),
-          DimPlot(alldata, reduction = "umap_raw", group.by = "cluster_combined", 
-                  label = TRUE) + NoLegend())
-
-FeaturePlot(alldata, reduction = "umap_raw", features = c("RelTime"),
-    order = T, slot = "data", combine = T) + scale_fill_viridis_c() + labs(title = "Time")
-
-FeaturePlot(alldata, reduction = "umap_raw", features = c("Ptprc","Epcam"), 
-    order = T, slot = "data", combine = T)
-
+FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), raster = TRUE,
+    order = T, slot = "data", combine = T) & dimtheme & NoAxes() & NoLegend()
 
 ```
+
 
 # Integration
 
 
-```{r, cache = TRUE}
+```{r}
 
-clean_imm.list <- SplitObject(alldata, split.by = "orig.ident")
-rm(alldata)
 
-clean_imm.list = lapply(clean_imm.list, function(x){
-    x <- NormalizeData(x, verbose = FALSE)
-    x <- FindVariableFeatures(x, selection.method = "vst",
-            nfeatures = 2000, verbose = FALSE)
-  })
+if(!file.exists(paste0(owncache,"integration.RData"))){
+  if(!file.exists(paste0(owncache,"anchors.RData"))){
+    alldata <- SplitObject(alldata, split.by = "orig.ident")
     
-clean_imm.list <- FindIntegrationAnchors(object.list = clean_imm.list, 
-                                            dims = 1:30, reduction = "cca")
+    alldata = lapply(alldata, function(x){
+        x <- NormalizeData(x, verbose = FALSE)
+        x <- FindVariableFeatures(x, selection.method = "vst",
+                nfeatures = 2000, verbose = FALSE)
+      })
+        
+    data.anchors <- FindIntegrationAnchors(object.list = alldata, 
+                                                dims = 1:30, reduction = "cca")
+    rm(alldata)
+    gc()
 
-```
-
-```{r, cache = TRUE}
-
-alldata <- IntegrateData(anchorset = clean_imm.list, dims = 1:30, new.assay.name = "CCA",
+    if(file.exists(owncache)){
+          save(data.anchors, file = paste0(owncache,"anchors.RData"))
+    }
+  }else{
+    rm(alldata)
+    gc()
+    load(paste0(owncache,"anchors.RData"))
+  }
+ alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "CCA",
      sample.tree = cbind(c(-4,-1,2,3,-8,5,-10,7,-15,9,4,8,11,12),
                          c(-5,-2,-3,1,-7,-6,-11,-12,-14,-13,6,10,-9,13)))
-
-rm(clean_imm.list)
-gc()
+  
+  rm(data.anchors)
+  gc()
+  
+  alldata <- ScaleData(alldata)
+  alldata <- RunPCA(alldata, npcs = 30, verbose = FALSE)
+  alldata <- RunUMAP(alldata, dims = 1:30)
+  
+  if(file.exists(owncache)){
+    save(alldata, file = paste0(owncache,"integration.RData"))
+  }
+}else{
+  load(paste0(owncache,"integration.RData"))
+}
 
 ```
 
-```{r, cache = TRUE}
-
-alldata <- ScaleData(alldata)
-alldata <- RunPCA(alldata, npcs = 30, verbose = FALSE)
-alldata <- RunUMAP(alldata, dims = 1:30)
-
-```
-
-```{r}
+```{r, fig.height = 2, fig.width=5}
 
 plot_grid(ncol = 2,
-  DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident", pt.size = 0.01) +
-    NoAxes() + ggtitle("RNA PCA") + NoLegend(),
-  DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident", pt.size = 0.01) +
-    NoAxes() + ggtitle("RNA UMAP") + NoLegend(),
   
-  DimPlot(alldata, reduction = "pca", group.by = "orig.ident") +
-    NoAxes() + ggtitle("PCA integrated") + NoLegend(),
-  DimPlot(alldata, reduction = "umap", group.by = "orig.ident") +
-    NoAxes() + ggtitle("UMAP integrated") + NoLegend()
+  DimPlot(alldata, reduction = "pca", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
+    NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
+  DimPlot(alldata, reduction = "umap", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
+    NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme
 )
 
-DimPlot(alldata, reduction = "umap", 
-        split.by = "orig.ident")+
-  NoAxes() + NoLegend()
-
-
-DimPlot(alldata, reduction = "umap", group.by = "Model", label = TRUE,
-        shuffle = TRUE) + NoAxes() + NoLegend()
+alldata@active.assay = "RNA"
+FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), 
+    order = T, slot = "data", combine = T) & dimtheme & NoAxes()
+alldata@active.assay = "CCA"
 
 ```
 
-```{r, fig.height = 10}
 
-FeaturePlot(clean_imm.int, reduction = "umap", 
-            features = c("percent_mito","percent_ribo",
-                         "S.Score", "G2M.Score", "nFeature_RNA"), 
-    order = T, slot = "data", combine = T)
 
-```
+```{r, fig.height = 6, fig.width=4}
 
-# Plot genes of interest
-
-```{r}
-
-DefaultAssay(clean_imm.int) = "RNA"
-
-FeaturePlot(clean_imm.int, reduction = "umap", features = c("Mki67","Pcna"), 
-    order = T, slot = "data", combine = T)
-
-FeaturePlot(clean_imm.int, reduction = "umap", features = c("Ptprc","Epcam"), 
-    order = T, slot = "data", combine = T)
+FeaturePlot(alldata, reduction = "umap", 
+            features = c("percent_mito","percent_ribo","S.Score",
+                         "G2M.Score", "nFeature_RNA"), 
+    order = T, slot = "data", combine = T, ncol = 2) &
+  NoAxes() & NoLegend() & dimtheme
 
 ```
+
 
 
 # Clustering
 
-```{r, cache = TRUE}
+```{r}
 
-alldata <- FindNeighbors(alldata, dims = 1:30, k.param = 350, prune.SNN = 1/15)
+if(!file.exists(paste0(owncache, "clustered.RData"))){
+  alldata@active.assay <- "CCA"
+  
+  alldata@active.assay
+
+  alldata <- FindNeighbors(alldata, dims = 1:30, k.param = 350, prune.SNN = 1/15)
+
+  
+  # Clustering with louvain (algorithm 1)
+  for (res in c(0.25, 0.5, 1, 1.5)) {
+      alldata <- FindClusters(alldata, graph.name = "CCA_snn",
+                              resolution = res, algorithm = 1)
+  }
+  if(file.exists(owncache)){
+    save(alldata, file = paste0(owncache, "clustered.RData"))
+  }
+}else{
+  load(paste0(owncache, "clustered.RData"))
+}
+
+
 
 ```
 
 
-```{r, cache = TRUE}
 
-alldata <- FindClusters(alldata, graph.name = "CCA_snn",
-                            resolution = 0.5, algorithm = 1)
+```{r dimplots, fig.height=6, fig.width = 6}
+
+plot_grid(ncol = 2, 
+          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.0.25",
+                  label = TRUE) + dimtheme + NoLegend() + NoAxes() + 
+            ggtitle("louvain_0.25"),
+          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.0.5", 
+                  label = TRUE) + dimtheme +  NoLegend() + NoAxes() + 
+            ggtitle("louvain_0.5"),
+          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.1", 
+                  label = TRUE) + dimtheme + NoLegend() + NoAxes() + 
+            ggtitle("louvain_1"), 
+          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.1.5", 
+                  label = TRUE) + dimtheme + NoLegend() + NoAxes() + 
+            ggtitle("louvain_1.5"))
+
 
 ```
+
+
+```{r clustreeplot}
+
+clustree(alldata@meta.data, prefix = "CCA_snn_res.")
+
+```
+
 
 ```{r}
 
-plot_grid(ncol = 2, 
-          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.0.5", 
-                  label = TRUE) + 
-            ggtitle("louvain_0.5") + theme(legend.position = "bottom"))
+clusternames = 
+  data.frame(Cluster = c(0:16),
+             Clustername = c("CD4+ T cells Emb","Monocytes",
+                             "Cytotoxic CD4+","Macrophages Apoe",
+                             "NK","ILC2","ILC3","Proliferating",
+                             "Low counts","DC1","Neutrophils",
+                             "Mature DC","Treg","Mast cells",
+                             "Macrophages Retnla","pDC",
+                             "IFN response CD4+"))
+
+clusterorder = 
+  c("CD4+ T cells Emb","Cytotoxic CD4+","Treg","IFN response CD4+",
+    "Proliferating","ILC2","ILC3","NK","Monocytes","Macrophages Apoe",
+    "Macrophages Retnla","DC1","Mature DC","pDC","Neutrophils",
+    "Mast cells","Low counts")
+
+alldata = AddMetaData(alldata, 
+                      factor(clusternames$Clustername[
+                        match(alldata$CCA_snn_res.0.5,clusternames$Cluster)], 
+                        levels = clusterorder),
+                      "NamedCluster")
+
+alldata = SetIdent(alldata, value = "NamedCluster")
+
+color_list = get_color_list(17)
+names(color_list) = clusterorder
 
 ```
 
+```{r, fig.height = 4, fig.width = 4}
 
+dp = DimPlot(alldata, label = TRUE, shuffle = TRUE) + 
+  NoAxes() + NoLegend() + dimtheme + scale_color_manual(values = color_list)
 
-```{r}
+dp$layers[[2]]$aes_params$size = 3
 
-plot_grid(ncol = 2, 
-          DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.0.5", 
-                  label = TRUE) + 
-            ggtitle("louvain_0.5") + theme(legend.position = "bottom"))
-
-VlnPlot(alldata, features = c("nFeature_RNA", "nCount_RNA",
-                              "percent_mito", "percent_ribo", 
-                              "S.Score", "G2M.Score"),
-        group.by = "CCA_snn_res.0.5" , 
-    ncol = 3, pt.size = 0)
-
-
-DotPlot(alldata, features = c("Ptprc","Epcam"), group.by = "CCA_snn_res.0.5",
-    assay = "RNA") + coord_flip()
+dp
 
 ```
-
 
 # Differential expression
 
@@ -291,7 +391,7 @@ alldata <- SetIdent(alldata, value = sel.clust)
 
 ```
 
-```{r, cache = TRUE}
+```{r}
 
 markers_genes <- FindAllMarkers(alldata, logfc.threshold = 0.2, test.use = "wilcox", 
     min.pct = 0.1, min.diff.pct = 0.2, only.pos = TRUE, max.cells.per.ident = 1000, 
@@ -558,7 +658,7 @@ plot_grid(get_legend(dot))
 
 # NMF
 
-```{r subsetting, cache = TRUE}
+```{r subsetting}
 
 
 # Making subsets
@@ -614,7 +714,7 @@ gc()
 
 ## CD4 T cells
 
-```{r CD4NMF, cache = TRUE}
+```{r CD4NMF}
 
 ntop = 40
 downsample_n = 500
@@ -866,7 +966,7 @@ plot_grid(plotlist = lapply(vpall, function(vp){
 
 ## GO BP
 
-```{r, cache = TRUE}
+```{r}
 
 
 top.genes <- lapply(1:ntop, function(i) {
@@ -906,7 +1006,7 @@ pathways.summarized$term_name = shortenterms(pathways.summarized$term_name)
 
 ## KEGG
 
-```{r, cache = TRUE}
+```{r}
 
 
   pathwaysKEGG <- lapply(seq_along(top.genes), function(i) {

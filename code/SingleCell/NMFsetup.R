@@ -134,96 +134,115 @@ makeViolins_Tcelltransfer <- function(
 }
 
 
-
-makeplots = function(pwys){
-  lapply(1:ntop, function(i) {
-    if (!paste0("factor_", i) %in% pwys$factor) return(NULL)
-    topdata = subset(pwys, 
-                     factor %in% paste0("factor_", i))
-    if(diff(range(topdata$GeneRatio))<0.1){
-      sizebreaks = waiver()
-    }else{
-      if(diff(range(topdata$GeneRatio))>0.4){
-        sizebreaks = seq(0,1,0.2)
-      }else{
-        sizebreaks = seq(0,1,0.1)
-      }}
-    txtoffset = diff(range(-log10(topdata$p_value)))/10
-    if(nrow(topdata)>10){topdata = topdata[1:10,]}
-    g <- ggplot(data = topdata, 
-                aes(reorder(term_name, -log10(p_value)), -log10(p_value),
-                    fill = -log10(p_value))) +
-      geom_point(aes(size = GeneRatio),
-                 color = "black", shape = 21) +
-      geom_text(mapping = aes(label = paste0(intersection_size),#,"/",query_size), 
-                              y = -log10(p_value) + txtoffset),
-                hjust = 0,
-                show.legend = FALSE, size = 3) + 
-      coord_flip(clip = "off") +
-      #facet_grid(~factor) +
-      scale_size_continuous(range = c(0.5, 6),
-                            breaks = sizebreaks,
-                            limits = c(0,NA)) +
-      scale_fill_gradientn(colours = viridis::magma(n = 9) %>% rev(),
-                           breaks = scales::trans_breaks(identity, identity, n= 3)) +
-      theme_minimal() +
-      theme(legend.position = "bottom", 
-            axis.title.y = element_blank(),
-            axis.text = element_text(size = 8),
-            plot.title = element_text(size = 10, face = "bold", hjust = 0.5)) +
-      guides(
-        size = guide_legend(title.position = "top", title.hjust = 0.5,
-                            title.theme = element_text(size = 8),
-                            text.theme = element_text(size = 8)),
-        fill = guide_colorbar(title.position = "top", title.hjust = 0.5,
-                              title.theme = element_text(size = 8),
-                              text.theme = element_text(size = 8),
-                              barheight = unit(6,"pt"),
-                              barwidth = unit(50,"pt"))) +
-      labs(x = "term", y = "", title = paste0("ent_f",i," (",topdata$query_size[[1]]," genes)"))
-    g
-  })
-}
-
-shortenterms = function(terms){
-  sapply(strsplit(terms," "), function(term){
-    concat = term[[1]]
-    if(length(term)>1){
-      currentlength = nchar(concat)
-      for(i in 2:length(term)){
-        if(currentlength>25){
-          concat = paste(concat, term[[i]], sep="\n")
-          currentlength = 0
-        }else{
-          concat = paste(concat, term[[i]])
-          currentlength = currentlength + nchar(term[[i]]) + 1
-        }
-        
-        
-      }
+showfactors_Il10 = function(nmf){
+  factors = colnames(nmf@meta.data)[grep("^nmf_", colnames(nmf@meta.data))]
+  vlns = lapply(VlnPlot(nmf,
+                        features = factors,
+                        group.by = "G_W",
+                        pt.size = 0.1,
+                        combine = FALSE),
+                function(x){
+                  df = x$data
+                  df$Week = factor(as.numeric(gsub('.* ','',df$ident)))
+                  x$data = df
+                  x$layers[[1]]$mapping$fill <- as.name("Week")
+                  x$mapping$fill = NULL
+                  
+                  colnames(df)[1] <- "y"
+                  df.summary <- df %>%
+                    group_by(ident) %>%
+                    summarise(
+                      sd = sd(y, na.rm = TRUE),
+                      m = mean(y)
+                    )
+                  
+                  x$layers[[2]]$aes_params$alpha =0.2
+                  x$layers[[2]]$aes_params$colour = "#888888"
+                  x$layers[[2]]$aes_params$shape = 16
+                  
+                  
+                  
+                  violin = x$layers[[1]]
+                  points = x$layers[[2]]
+                  #points$aes_params$alpha = 0.4
+                  violin$aes_params$alpha = 0.3
+                  violin$aes_params$size = 0.3
+                  x$layers[[1]] = rasterise(points, dpi = 300)
+                  x$layers[[2]] = violin
+                  
+                  x = x + NoLegend() +
+                    labs(x = "Week") +
+                    theme(axis.title.y = element_blank(),
+                          axis.title.x = element_text(size = 8,
+                                                      margin = margin(t = 1, r = 1, b = 1, l = 1,
+                                                                      unit = "pt"),
+                                                      hjust = 0.5),
+                          plot.title = element_text(size = 8, hjust = 0.5,
+                                                    margin = margin(t = 3, r = 1, b = 1, l = 1, unit = "pt"),
+                                                    face = "bold"
+                          ),
+                          #plot.title = element_blank(),
+                          axis.text = element_text(size = 8),
+                          axis.text.x = element_text(angle = 0, 
+                                                     hjust = 0.5),
+                          plot.margin = margin(t = 1, r = 1, b = 1, l = 1, unit = "pt")) + 
+                    #geom_errorbar(aes(ymin = m, ymax = m+sd, y = m),data = df.summary, 
+                    #          #      color = "red", 
+                    #              width = 0.25) +
+                    geom_point(aes(y = m),data = df.summary, 
+                               #     color = "red", 
+                               size = 1) + 
+                    scale_x_discrete(labels = c("6 (WT)",6,8,10,12,14)) +
+                    scale_fill_viridis_d()
+                  
+                  x
+                })
+  
+  bars = lapply(as.numeric(gsub("nmf_","",factors)),function(i){
+    barbreaks = seq(0,1,0.2)
+    if(max(nmf@reductions$NMF@feature.loadings[,i])<0.2){
+      barbreaks = seq(0,1,0.1)
     }
-    concat
+    x = FactorGeneLoadingPlot(nmf, factor = i, topn = 10) +
+      scale_y_continuous(expand = expansion(mult = 0),
+                         breaks = barbreaks) + 
+      theme(axis.text.y = element_text(face = "italic",
+                                       size = 8, color = "black"),
+            axis.text.x = element_text(size = 8, color = "black"),
+            axis.title.y = element_blank(),
+            axis.title.x = element_text(size = 8,hjust = 0),
+            plot.margin = margin(t = 1, b = 1, l = 3, unit = "pt")) +
+      labs(y = "Weight")
+    x$layers[[1]]$aes_params$colour = NA
+    #x$layers[[1]]$aes_params$fill = "#888888"
+    x 
   })
+  
+  plots <- lapply(1:length(vlns), function(i){
+    #lapply(1, function(i){
+    print(plot_grid(
+      ggdraw() + 
+        draw_label(
+          "Factor score",
+          #fontface = 'bold',
+          hjust = 0.5, 
+          size =  8, angle = 90
+        ),
+      plot_grid(ggdraw() + 
+                  draw_label(
+                    i,
+                    fontface = 'bold',
+                    hjust = 0.5, 
+                    size =  10
+                  ),
+                plot_grid(vlns[[i]] + theme(plot.title = element_blank()),
+                          bars[[i]], ncol = 2, rel_widths = c(1.5,1)), 
+                rel_heights = c(1,6), ncol = 1), nrow = 1, rel_widths = c(1,10)))
+  })
+  
+  
 }
 
-
-
-getclusternames_Il10 = function(celltype, clusters){
-  stop("Get cluster names in file (once)")
-  
-  # clusternames = read.csv2("../Clusternames_IL10KO.csv")
-  # #clusternames = data.frame(RNA_clusters = 0:20, epi_cluster = 0:20, epi_order = 0:20)
-  # 
-  # clusterorder_all = clusternames[, paste0(celltype,"_order")]
-  # clusterorder = clusterorder_all[clusterorder_all %in% 
-  #                                   clusternames[clusternames$Cluster %in% clusters, 
-  #                                 paste0(celltype,"_clusters")]]
-  # 
-  # factor(clusternames[match(clusters, clusternames[,1]),
-  #                     paste0(celltype,"_clusters")], 
-  #        levels = clusterorder)
-  
-}
 
 getfactorpvalues_TCT = function(nmf, downsample_n, ntop){ ### Added 2024-01-02
   set.seed(42)
