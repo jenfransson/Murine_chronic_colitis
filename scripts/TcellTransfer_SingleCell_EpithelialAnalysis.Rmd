@@ -1,5 +1,5 @@
 ---
-title: "Preparation of data for T cell transfer single cell analysis"
+title: "T cell transfer single cell analysis - Epithelial fraction"
 editor_options:
   chunk_output_type: console
 date: "`r format(Sys.time(), '%d %B, %Y')`"
@@ -33,6 +33,7 @@ library(clustree)
 
 library(future)
 plan("sequential")
+options(future.globals.maxSize = 50 * 1024^3)
 
 source("../code/SingleCell/color_list.R")
 source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
@@ -42,9 +43,9 @@ source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
 
 ```{r}
  
-datadir = "../data/SingleCell/TcellTransfer/R_objects/"
+datadir = "../data/SingleCell/TcellTransfer/R_objects_1/"
 
-owncache = "../data/SingleCell/TcellTransfer/cache_immune/"
+owncache = "../data/SingleCell/TcellTransfer/cache_epithelial/"
 
 violintheme = theme(axis.text = element_text(size = 8),
         plot.title = element_text(size = 8),
@@ -73,10 +74,53 @@ if(file.exists(owncache)){
 
 ```{r loaddata}
 
+alldata = readRDS(paste0(datadir,"epithelial_data.rds"))
+
+alldata = SetIdent(alldata, value = "orig.ident")
+
+alldata <- AddMetaData(alldata, log10(alldata$nFeature_RNA), "logFeatures")
+
+
+limits = data.frame(orig.ident = c('G_D0_E_ut', 'G_D10_E_ut', 'G_D20_E_ut', 'G_D30_E_il', 'G_D40_E_il',
+                               'G_D40_E_ut', 'G_D50_E_ut', 'G_D60_E_il', 'G_D60_E_ut', 'G_W0_Epi', 
+                               'G_W1_Epi', 'G_W2_Epi', 'G_W3_Epi', 'G_W3_Epi_aIL12', 'G_W4_Epi',
+                               'G_W5_Epi', 'G_W5_Epi_aIL12', 'G_W6_Epi', 'G_W7_Epi', 'G_W7_Epi_aIL12'),
+density = NA)
+
+
+
+
+
+for(x in sort(unique(alldata$orig.ident))){
+  dens = density(alldata@meta.data[alldata@meta.data$orig.ident %in% x,]$logFeatures)
+  maxima = dens$x[which(diff(sign(diff(dens$y)))==-2)+1]
+  maxima_y = dens$y[which(diff(sign(diff(dens$y)))==-2)+1]
+  maxima = maxima[maxima_y>0.01]
+  minima = dens$x[which(diff(sign(diff(dens$y)))==2)+1]
+  minima_y = dens$y[which(diff(sign(diff(dens$y)))==2)+1]
+  minima = minima[minima<max(maxima)]
+  limits[match(x, limits$orig.ident),"density"] = max(minima)
+  
+}
+
+  ggplot(alldata@meta.data, aes(x = logFeatures)) + geom_density() +
+    geom_vline(data = limits, mapping = aes(xintercept = density)) + 
+    facet_wrap(~orig.ident)
+  
+  goodcells = Cells(alldata)[alldata$logFeatures > limits$density[match(alldata$orig.ident, limits$orig.ident)]]
+  
+  alldata <-  subset(alldata, cells = goodcells)
+  
+
+```
+
+```{r normalize}
+
 if(!file.exists(paste0(owncache,"first_dr.RData"))){
-  alldata = readRDS(paste0(datadir,"immune_data.rds"))
 
 DefaultAssay(alldata) = "RNA"
+
+
 
 suppressWarnings(
   suppressMessages(
@@ -207,18 +251,23 @@ FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), raster =
 ```{r}
 
 
-plan("multisession", workers = 8)
 
 if(!file.exists(paste0(owncache,"integration.RData"))){
   if(!file.exists(paste0(owncache,"anchors.RData"))){
+    
+    plan("sequential")
+
     alldata <- SplitObject(alldata, split.by = "orig.ident")
     
     alldata = lapply(alldata, function(x){
+      message(length(Cells(x)))
         x <- NormalizeData(x, verbose = FALSE)
         x <- FindVariableFeatures(x, selection.method = "vst",
                 nfeatures = 2000, verbose = FALSE)
       })
-        
+       
+   # Fails on 128GB with 6 workers 
+    plan("multisession", workers = 3, gc = TRUE)
     data.anchors <- FindIntegrationAnchors(object.list = alldata, 
                                                 dims = 1:30, reduction = "cca")
     rm(alldata)
@@ -232,9 +281,12 @@ if(!file.exists(paste0(owncache,"integration.RData"))){
     gc()
     load(paste0(owncache,"anchors.RData"))
   }
- alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "CCA",
-     sample.tree = cbind(c(-4,-1,2,3,-8,5,-10,7,-15,9,4,8,11,12),
-                         c(-5,-2,-3,1,-7,-6,-11,-12,-14,-13,6,10,-9,13)))
+  
+  plan("multisession", workers = 6, gc = TRUE)
+  alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "CCA",
+         sample.tree = matrix(c(-5,-4, 1,2,3,-3,5,-9,-12,4,6,-7,8,12,7,-2,
+                                13,17,18, -17,-11,-16,-6,-8,-13,-19,-20,-1,
+                                -15,-14,-18,10,-10,11,9,14,15,16), ncol = 2))
   
   rm(data.anchors)
   gc()
@@ -345,20 +397,16 @@ clustree(alldata@meta.data, prefix = "CCA_snn_res.")
 ```{r}
 
 clusternames = 
-  data.frame(Cluster = c(0:16),
-             Clustername = c("CD4+ T cells Emb","Monocytes",
-                             "Cytotoxic CD4+","Macrophages Apoe",
-                             "NK","ILC2","ILC3","Proliferating",
-                             "Low counts","DC1","Neutrophils",
-                             "Mature DC","Treg","Mast cells",
-                             "Macrophages Retnla","pDC",
-                             "IFN response CD4+"))
+  data.frame(Cluster = 0:12, 
+             epi_clusters = c("TA G2-M","Goblet Ccl6","TA S-G2","Colonocytes Areg",
+    "Goblet Mptx1","Colonocytes Car1","ISC","TA G1-S",
+    "Early EEC","Goblet Reg4","M cells","Late EEC","Tuft")
+             )
+clusterorder = c("ISC","TA G1-S","TA S-G2","TA G2-M",
+                 "Colonocytes Areg","Colonocytes Car1",
+                 "M cells","Goblet Ccl6","Goblet Mptx1",
+                 "Goblet Reg4","Early EEC","Late EEC","Tuft")
 
-clusterorder = 
-  c("CD4+ T cells Emb","Cytotoxic CD4+","Treg","IFN response CD4+",
-    "Proliferating","ILC2","ILC3","NK","Monocytes","Macrophages Apoe",
-    "Macrophages Retnla","DC1","Mature DC","pDC","Neutrophils",
-    "Mast cells","Low counts")
 
 alldata = AddMetaData(alldata, 
                       factor(clusternames$Clustername[
@@ -368,7 +416,7 @@ alldata = AddMetaData(alldata,
 
 alldata = SetIdent(alldata, value = "NamedCluster")
 
-color_list = get_color_list(17)
+color_list = get_color_list(13)
 names(color_list) = clusterorder
 
 ```
@@ -416,17 +464,12 @@ for (i in unique(top25$cluster)) {
 
 ```{r}
 
-markergenes = c('Icos', 'Il7r', 'Cd3d', 'Cd3e', 'Cd3g', 'Cd4',
-                'Emb', 'Lef1', 'Cxcr6', 'Ccl5', 'Eomes', 'Gzmk',
-                'Cd8a', 'Tnfrsf4', 'Ctla4', 'Foxp3', 'Tnfsf8',
-                'Ifit1', 'Zbp1', 'Stmn1', 'Mki67', 'Gata3', 'Areg', 
-                'Il22', 'Nrgn', 'Gpr183', 'Ncr1', 'Xcl1', 'Klrc1',
-                'Cd19', 'Ms4a1', 'Bank1', 'Jchain', 'Mzb1', 'Cd14',
-                'Csf1r', 'Lyz2', 'Ms4a6d', 'Apoe', 'C1qa', 'Mafb',
-                'Retnla', 'Fn1', 'Cd74', 'Ly6c2', 'Xcr1', 'Cd86',
-                'Ccr7', 'Irf8', 'Bst2', 'Siglech', 'S100a9', 'S100a8',
-                'Cpa3', 'Mcpt1', 'Retnlg'
-)
+markergenes = 
+  c("Stmn1","Lgr5","Ascl2","Smoc2","Hells","Mcm6","Pcna","Top2a","Mki67",
+    "Hist1h2ap","Ccnb2","Cenpa","Cdc20","Muc3","Areg","Sycn","Wfdc2",
+    "Lgals3","Car1","Ccl20","Ubd","Clu","Tnf","Muc2","Ang4","Agr2",
+    "Ccl6","Mptx1","Reg4","Chga","Chgb","Pyy","Cck","Dclk1")
+
 
 
 ```
@@ -603,42 +646,6 @@ barplot + geom_bar(stat = "identity", width = 0.6, color = "black")
 
 ```
 
-# CITE-seq
-
-```{r}
-
-DefaultAssay(alldata) = "FB"
-
-alldata <- NormalizeData(alldata)
-alldata <- ScaleData(alldata)
-  
-```
-
-
-
-```{r, fig.height = 2.2, fig.width = 2.3}
-
-alldata@active.assay <- "FB"
-
-dot = DotPlot(alldata, assay = "FB", features = featureorder, group.by = "Named_clusters") 
-dot = dot + aes(x = id, y = features.plot) + scale_x_discrete(position = "top") +
-  labs(y = "Antibodies",x = "Clusters") +
-  scale_size(range = c(0.1,2.5), breaks = c(60,80,100)) +
-  theme(legend.position = "bottom", legend.title = element_blank(),
-        axis.text.x = element_text(size = 6, hjust = 0, angle = 90),
-        axis.text.y = element_text(size = 6),
-        legend.key.width = unit(0.3, "cm"),
-        legend.key.height = unit(0.3,"cm"),
-        legend.text = element_text(size = 6),
-        axis.title.y = element_text(size = 8),
-        axis.title.x = element_blank())
-
-dot + theme(legend.position = "none")
-plot_grid(get_legend(dot))
-
-```
-
-
 # Subset analyses
 
 
@@ -649,10 +656,10 @@ alldata = AddMetaData(alldata, alldata$NamedCluster, "goblet")
 
 alldata$stemcolono[!(alldata$stemcolono %in% 
                   c("ISC","TA G1-S","TA S-G2","TA G2-M",
-                 "Colonocytes"))] = NA
+                 "Colonocytes Areg","Colonocytes Car1"))] = NA
 
 alldata$goblet[!(alldata$goblet %in% 
-                  c("Goblet", "Goblet Reg4"))] = NA
+                  c("Goblet Ccl6","Goblet Mptx1", "Goblet Reg4"))] = NA
 
 
 ```
@@ -682,7 +689,6 @@ rm(alldata)
 gc()
 
 ```
-
 
 
 # NMF
@@ -741,325 +747,324 @@ gc()
 ```
 
 
-## CD4 T cells
+## Progenitors and colonocytes
 
-```{r CD4NMF}
 
-ntop = 40
-downsample_n = 500
-
-nmf <- RunNMF(object = CD4data, assay = "RNA", nfactors = ntop,
-                n.cores = 1)
-
-```
 
 ```{r}
 
+ntop = 40
+downsample_n = 1000
+txt = element_text(size = 8)
+
+```
+
+
+```{r}
+
+stemcolono@active.assay <- "RNA"
+
+
+stemcolono <- FindVariableFeatures(stemcolono)
+stemcolono <- ScaleData(stemcolono, features = VariableFeatures(stemcolono))
+
+stemcolono <- RunNMF(object = stemcolono, assay = "RNA", nfactors = ntop,
+              n.cores = 1)
+ 
+
 for(i in 1:ntop){
-  nmf <- AddMetaData(nmf, nmf@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+  stemcolono <- AddMetaData(stemcolono, stemcolono@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
                      paste0("nmf_",i))
 }
 
-nmf$ModelTreatmentTime = factor(nmf$ModelTreatmentTime,
-      levels = unique(nmf$ModelTreatmentTime[order(factor(nmf$Model, levels = c("SCID", "Rag2")),
-                                    factor(nmf$Treatment, levels = c("ut","il")),
-                                    nmf$Time)]))
+stemcolono$Week = as.numeric(gsub("W","",stemcolono$Week))
+
+stemcolono = AddMetaData(stemcolono, factor(paste(stemcolono$Genotype, stemcolono$Week),
+                              levels = c("WT 6", 
+                                         paste0("Il10KO ", 
+                                               c(6,8,10,12,14)))), 
+                  "G_W")
 
 ```
 
 ```{r}
 
-
-breaksList = seq(-1, 1, by = 0.01)
-
-ph = pheatmap(cor(nmf@meta.data[,grep("^nmf", colnames(nmf@meta.data))]), 
-         color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)),
-         breaks = breaksList)
+pvaluelist = getfactorpvalues_Il10(stemcolono, downsample_n, ntop)
+modelpvalues = pvaluelist$modelpvalues
+rank_modelpvalues = pvaluelist$rank_modelpvalues
+rm(pvaluelist)
 
 
-```
-
-
-```{r}
-
-Groups = SplitObject(nmf, split.by = "ModelTreatment")
-
-```
-
-
-```{r}
-
-
-modelpvalues = getfactorpvalues(nmf, downsample = downsample_n, ntop)
-
-
-pvaluegg = melt(modelpvalues, variable.name = "factor", value.name =  "p.value")
-pvaluegg$factor = factor(pvaluegg$factor, levels = rev(paste0("nmf_",ph$tree_row$order)))
+pvaluegg = melt(modelpvalues, variable.name = "factor",
+                value.name =  "p.value")
 pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
 
 
-lmp = ggplot(pvaluegg,
-       aes(y = factor, x = depvar)) + 
-  geom_tile(aes(fill = -log10(p.value))) + 
-  scale_fill_viridis_c(option = "inferno", limits = c(0,NA)) + 
-  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
-  theme_classic() + 
-  scale_y_discrete(labels = function(x){gsub("nmf_", paste0(factorprefix,"f"),x)}) + 
-  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size = 8),
-        axis.title = element_blank(),
-        legend.title = element_text(size = 8),
-        legend.text = element_text(size = 8),
-        legend.key.size = unit(8,"pt"))
+stemcolono_values = stemcolono@meta.data[,grep("^nmf_", colnames(stemcolono@meta.data))]
 
-```
+stemcolono_scaled = apply(stemcolono_values, 2, scale)
 
-```{r}
+stemcolono_scaled_means_id = aggregate(stemcolono_scaled, by = list(stemcolono$G_W), mean)
+stemcolono_means_id = aggregate(stemcolono_values, by = list(stemcolono$G_W), mean)
+stemcolono_means_scaled_id = as.data.frame(apply(stemcolono_means_id[,-1], 2, scale))
+stemcolono_means_scaled_id$Group.1 = stemcolono_means_id$Group.1
 
-nmf_values = nmf@meta.data[,grep("^nmf_", colnames(nmf@meta.data))]
-
-nmf_scaled = apply(nmf_values, 2, scale)
-
-nmf_scaled_means_id = aggregate(nmf_scaled, by = list(nmf$ModelTreatmentTime), mean)
-nmf_means_id = aggregate(nmf_values, by = list(nmf$ModelTreatmentTime), mean)
-nmf_means_scaled_id = as.data.frame(apply(nmf_means_id[,-1], 2, scale))
-nmf_means_scaled_id$Group.1 = nmf_means_id$Group.1
-
-nmf_scaled_means_cluster = aggregate(nmf_scaled, by = list(nmf$named_cluster), mean)
-nmf_means_cluster = aggregate(nmf_values, by = list(nmf$named_cluster), mean)
-if(nrow(nmf_means_cluster)==1){
-  nmf_means_scaled_cluster = as.data.frame(rbind(apply(nmf_means_cluster[,-1], 2, scale)))
-  nmf_means_scaled_cluster$Group.1 = nmf_means_cluster$Group.1
-  nmf_means_scaled_cluster[1,is.nan(as.numeric(nmf_means_scaled_cluster[1,]))] = 0
+stemcolono_scaled_means_cluster = aggregate(stemcolono_scaled, by = list(stemcolono$NamedCluster), mean)
+stemcolono_means_cluster = aggregate(stemcolono_values, by = list(stemcolono$NamedCluster), mean)
+if(nrow(stemcolono_means_cluster)==1){
+  stemcolono_means_scaled_cluster = as.data.frame(rbind(apply(stemcolono_means_cluster[,-1], 2, scale)))
+  stemcolono_means_scaled_cluster$Group.1 = stemcolono_means_cluster$Group.1
+  stemcolono_means_scaled_cluster[1,is.nan(as.numeric(stemcolono_means_scaled_cluster[1,]))] = 0
 }else{
-  nmf_means_scaled_cluster = as.data.frame(apply(nmf_means_cluster[,-1], 2, scale))
-  nmf_means_scaled_cluster$Group.1 = nmf_means_cluster$Group.1
+  stemcolono_means_scaled_cluster = as.data.frame(apply(stemcolono_means_cluster[,-1], 2, scale))
+  stemcolono_means_scaled_cluster$Group.1 = stemcolono_means_cluster$Group.1
 }
 
-
 ```
 
+```{r, fig.show="hide"}
 
-
-```{r}
-
-ph_sample = pheatmap(nmf_means_scaled_id[,paste0("nmf_", 1:ntop)])
-
-```
-
-```{r, fig.width=3.4, fig.height=6}
+ph_sample = pheatmap(stemcolono_means_scaled_id[,paste0("nmf_", 1:ntop)])
 
 ph_order = ph_sample$tree_col$order
 
-txt = element_text(size = 8)
+```
 
-my_dotp_cl = ggplot(melt(nmf_means_scaled_cluster), 
+```{r, fig.width = 2.5, fig.height = 6}
+
+my_dotp = ggplot(melt(stemcolono_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + 
+  geom_vline(color = "white", xintercept = 1.5) +
+  scale_fill_viridis_c() + 
+  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt,
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_size_continuous(limits = c(0,100), range= c(0,3))
+
+my_dotp_cl = ggplot(melt(stemcolono_means_scaled_cluster), 
                  aes(x = Group.1, 
                      y = factor(variable, 
                                 levels = rev(paste0("nmf_",ph_order))))) +
   geom_tile(aes(fill = value)) + scale_fill_viridis_c() +
-  scale_x_discrete(labels = function(x){gsub("nmf_", paste0(factorprefix,"f"),x)}) + 
-  theme_classic() + 
+  theme_classic() +
   theme(axis.text = txt,
         axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
         axis.title = element_blank(),
         legend.text = txt,
+        axis.text.y = element_blank(),
+        legend.key.size = unit(8,"pt"),
+        plot.title = element_blank(),
+        legend.position = "bottom",
         legend.title = txt) + 
   scale_size_continuous(limits = c(0,100))
-
-my_dotp = ggplot(melt(nmf_means_scaled_id), 
-                 aes(x = Group.1, 
-                     y = factor(variable, 
-                                levels = rev(paste0("nmf_",ph_order))))) +
-  geom_tile(aes(fill = value)) + scale_fill_viridis_c() + 
-  theme_classic() + 
-  theme(axis.text = txt,
-        axis.title = element_blank(),
-        legend.text = txt,
-        legend.title = txt) + 
-  scale_x_discrete(labels = function(x){gsub("nmf_", paste0(factorprefix,"f"),x)}) + 
-  scale_size_continuous(limits = c(0,100), range= c(0,3)) +
-    labs(title = "Ordered by similarity") + 
-  theme(plot.title = element_text(size = 10),
-        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5))
-
-
 
 lmp = ggplot(pvaluegg,
        aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
   geom_tile(aes(fill = -log10(p.value))) + 
-  scale_fill_viridis_c(option = "inferno", limits = c(0,NA)) + 
+  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
   scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
   theme_classic() + 
-  scale_y_discrete(labels = function(x){gsub("nmf_", paste0(factorprefix,"f"),x)}) + 
   theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size = 8),
+        axis.text.y = element_blank(),
         axis.title = element_blank(),
         legend.title = element_text(size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
         legend.text = element_text(size = 8),
         legend.key.size = unit(8,"pt"))
 
+scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
+               max(my_dotp$data$value, my_dotp_cl$data$value))
 
-plot_grid(my_dotp_cl + 
+plot_grid(my_dotp + 
             scale_fill_viridis_c(limits = scalerange) + 
             theme(axis.title = element_blank(),
                   legend.position = "bottom",
                       legend.key.size = unit(8,"pt")),
-          my_dotp + 
-            scale_fill_viridis_c(limits = scalerange) +
-            theme(axis.title = element_blank(),
-                  legend.position = "bottom",
-                      legend.key.size = unit(8,"pt"),
-                  plot.title = element_blank(),
-                  axis.text.y = element_blank()
-                  ),
+          my_dotp_cl + 
+            scale_fill_viridis_c(limits = scalerange),
           lmp + 
-            theme(legend.position = "bottom",
-                  axis.text.y = element_blank()
-                  ) +
             labs(fill = ""), 
-          align = "h", ncol = 3, rel_widths = c(2,2.7,0.8)
+          align = "h", ncol = 3, rel_widths = c(3.5,2.5,1)
           )
 
+```
 
+
+```{r, fig.height = 2, fig.width = 4}
+
+showfactors_Il10(stemcolono)
 
 ```
 
 
-```{r bytime, fig.height = 2.5, fig.width=3.5}
-
-vlns = makeViolins(Groups,paste0("nmf_",1:ntop), relvln = c(4,1))
-
-bars = lapply(1:ntop,function(i){
-  barbreaks = seq(0,1,0.2)
-  if(max(nmf@reductions$NMF@feature.loadings[,i])<0.2){
-    barbreaks = seq(0,1,0.1)
-  }
-  x = FactorGeneLoadingPlot(nmf, factor = i, topn = 10) +
-    scale_y_continuous(expand = expansion(mult = 0),
-                       breaks = barbreaks) + 
-    theme(axis.text.y = element_text(face = "italic",
-                                     size = 6, color = "black"),
-          axis.text.x = element_text(size = 6, color = "black"),
-          axis.title.y = element_blank(),
-          axis.title.x = element_text(size = 8,hjust = 0),
-          plot.margin = margin(t = 1, b = 1, l = 3, unit = "pt")) +
-    labs(y = "Weight")
-  x$layers[[1]]$aes_params$colour = NA
-  x 
-  })
-
-plots <- lapply(1:length(vlns), function(i){
-  print(plot_grid(
-    ggdraw() + 
-      draw_label(
-        "Factor score",
-        hjust = 0.5, 
-        size =  8, angle = 90
-      ),
-    plot_grid(ggdraw() + 
-  draw_label(
-    paste0(factorprefix, "f",i),
-    fontface = 'bold',
-    hjust = 0.5, 
-    size =  10
-  ),
-  plot_grid(vlns[[i]] + theme(plot.title = element_blank()),
-            bars[[i]], ncol = 2, rel_widths = c(4,1)), 
-  rel_heights = c(1,6), ncol = 1), nrow = 1, rel_widths = c(1,10)))
-})
-
-```
+## Goblet cells
 
 
-# Distributions between clusters
-
-```{r byident, fig.height = 10}
-
-vpall <- VlnPlot(nmf, features = paste0("nmf_",1:ntop), 
-        pt.size = 0.1, combine = FALSE)
-
-plot_grid(plotlist = lapply(vpall, function(vp){
-  vp$layers[[2]]$aes_params$shape = 16
-  vp$layers[[1]]$aes_params$alpha = 0.4
-  vpts = vp$layers[[2]]
-  vp$layers[[2]] = vp$layers[[1]]
-  vp$layers[[1]] <- ggrastr::rasterise(vpts, dpi = 300)
-  vp +
-    NoLegend()}))
-
-
-```
-
-# Enriched pathways
-
-## GO BP
 
 ```{r}
 
-
-top.genes <- lapply(1:ntop, function(i) {
-  vals <- nmf@reductions$NMF@feature.loadings[, i]
-  gg <- data.frame(x = 1:length(vals), vals = sort(vals, decreasing = T))
-  gg$gene <- rownames(gg)
-  gg <- subset(gg, vals > 0)
-  gg$logvals <- log(gg$vals)
-  gg$smooth_logvals <- smth.gaussian(x = gg$logvals, windowLength = 10)
-  ggs <- gg[1:min(500, nrow(gg)), ]
-  knee <- uik(x = ggs$x, y = ggs$smooth_logvals)
-  ggs[1:knee, ]$gene
-})
-
-pathways <- lapply(seq_along(top.genes), function(i) {
-  gset <- top.genes[[i]]
-  df <- 
-    gost(query = gset, organism = "mmusculus", 
-         sources = "GO:BP", evcodes = TRUE)$result
-  if (is.null(df)) return(NULL)
-  df$factor <- paste0("factor_", i)
-  return(df)
-})
-pathways <- do.call(rbind, pathways)
-pathways$GeneRatio <- pathways$intersection_size/pathways$query_size
-
-pathways.summarized <- pathways %>% 
-  group_by(factor) %>%
-  top_n(n = 20, wt = -log10(p_value))
-
-pathways.summarized$term_name = shortenterms(pathways.summarized$term_name)
+ntop = 20
+downsample_n = 500
+txt = element_text(size = 8)
 
 ```
 
-`r datatable(pathways.summarized, class = 'cell-border stripe compact')`
-
-
-## KEGG
 
 ```{r}
 
-
-  pathwaysKEGG <- lapply(seq_along(top.genes), function(i) {
-    message(paste("KEGG analysis", i))
-    gset <- top.genes[[i]]
-    df <- gost(query = gset, organism = "mmusculus", sources = "KEGG")$result
-    if (is.null(df)) return(NULL)
-    df$factor <- paste0("factor_", i)
-    return(df)
-  })
-  pathwaysKEGG <- do.call(rbind, pathwaysKEGG)
+goblet@active.assay <- "RNA"
 
 
-pathwaysKEGG$GeneRatio <- pathwaysKEGG$intersection_size/pathwaysKEGG$query_size
-pathwaysKEGG.summarized <- pathwaysKEGG %>% 
-  group_by(factor) %>%
-  top_n(n = 20, wt = -log10(p_value))
+goblet <- FindVariableFeatures(goblet)
+goblet <- ScaleData(goblet, features = VariableFeatures(goblet))
 
-pathwaysKEGG.summarized$term_name = shortenterms(pathwaysKEGG.summarized$term_name)
+goblet <- RunNMF(object = goblet, assay = "RNA", nfactors = ntop,
+              n.cores = 1)
+ 
+
+for(i in 1:ntop){
+  goblet <- AddMetaData(goblet, goblet@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+                     paste0("nmf_",i))
+}
+
+goblet$Week = as.numeric(gsub("W","",goblet$Week))
+
+goblet = AddMetaData(goblet, factor(paste(goblet$Genotype, goblet$Week),
+                              levels = c("WT 6", 
+                                         paste0("Il10KO ", 
+                                               c(6,8,10,12,14)))), 
+                  "G_W")
 
 ```
 
-`r datatable(pathwaysKEGG.summarized, class = 'cell-border stripe compact')`
+```{r}
 
+pvaluelist = getfactorpvalues_Il10(goblet, downsample_n, ntop)
+modelpvalues = pvaluelist$modelpvalues
+rank_modelpvalues = pvaluelist$rank_modelpvalues
+rm(pvaluelist)
+
+
+pvaluegg = melt(modelpvalues, variable.name = "factor",
+                value.name =  "p.value")
+pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
+
+
+goblet_values = goblet@meta.data[,grep("^nmf_", colnames(goblet@meta.data))]
+
+goblet_scaled = apply(goblet_values, 2, scale)
+
+goblet_scaled_means_id = aggregate(goblet_scaled, by = list(goblet$G_W), mean)
+goblet_means_id = aggregate(goblet_values, by = list(goblet$G_W), mean)
+goblet_means_scaled_id = as.data.frame(apply(goblet_means_id[,-1], 2, scale))
+goblet_means_scaled_id$Group.1 = goblet_means_id$Group.1
+
+goblet_scaled_means_cluster = aggregate(goblet_scaled, by = list(goblet$NamedCluster), mean)
+goblet_means_cluster = aggregate(goblet_values, by = list(goblet$NamedCluster), mean)
+if(nrow(goblet_means_cluster)==1){
+  goblet_means_scaled_cluster = as.data.frame(rbind(apply(goblet_means_cluster[,-1], 2, scale)))
+  goblet_means_scaled_cluster$Group.1 = goblet_means_cluster$Group.1
+  goblet_means_scaled_cluster[1,is.nan(as.numeric(goblet_means_scaled_cluster[1,]))] = 0
+}else{
+  goblet_means_scaled_cluster = as.data.frame(apply(goblet_means_cluster[,-1], 2, scale))
+  goblet_means_scaled_cluster$Group.1 = goblet_means_cluster$Group.1
+}
+
+```
+
+```{r, fig.show="hide"}
+
+ph_sample = pheatmap(goblet_means_scaled_id[,paste0("nmf_", 1:ntop)])
+
+ph_order = ph_sample$tree_col$order
+
+```
+
+```{r, fig.width = 2.6, fig.height = 6}
+
+
+
+my_dotp = ggplot(melt(goblet_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + 
+  geom_vline(color = "white", xintercept = 1.5) +
+  scale_fill_viridis_c() + 
+  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt,
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_size_continuous(limits = c(0,100), range= c(0,3))
+
+my_dotp_cl = ggplot(melt(goblet_means_scaled_cluster), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + scale_fill_viridis_c() +
+  theme_classic() +
+  theme(axis.text = txt,
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.title = element_blank(),
+        legend.text = txt,
+        axis.text.y = element_blank(),
+        legend.key.size = unit(8,"pt"),
+        plot.title = element_blank(),
+        legend.position = "bottom",
+        legend.title = txt) + 
+  scale_size_continuous(limits = c(0,100))
+
+lmp = ggplot(pvaluegg,
+       aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
+  geom_tile(aes(fill = -log10(p.value))) + 
+  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
+  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        legend.title = element_text(size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
+
+scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
+               max(my_dotp$data$value, my_dotp_cl$data$value))
+
+plot_grid(my_dotp + 
+            scale_fill_viridis_c(limits = scalerange) + 
+            theme(axis.title = element_blank(),
+                  legend.position = "bottom",
+                      legend.key.size = unit(8,"pt")),
+          my_dotp_cl + 
+            scale_fill_viridis_c(limits = scalerange),
+          lmp + 
+            labs(fill = ""), 
+          align = "h", ncol = 3, rel_widths = c(3.5,1.8,1)
+          )
+
+```
+
+
+```{r, fig.height = 2, fig.width = 4}
+
+showfactors_TCT(goblet)
+
+```
 
 # Session info
 

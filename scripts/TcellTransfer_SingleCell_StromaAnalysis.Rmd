@@ -1,5 +1,5 @@
 ---
-title: "Preparation of data for T cell transfer single cell analysis"
+title: "T cell transfer single cell analysis - Stroma fraction"
 editor_options:
   chunk_output_type: console
 date: "`r format(Sys.time(), '%d %B, %Y')`"
@@ -33,6 +33,7 @@ library(clustree)
 
 library(future)
 plan("sequential")
+options(future.globals.maxSize = 50 * 1024^3)
 
 source("../code/SingleCell/color_list.R")
 source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
@@ -44,7 +45,7 @@ source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
  
 datadir = "../data/SingleCell/TcellTransfer/R_objects/"
 
-owncache = "../data/SingleCell/TcellTransfer/cache_immune/"
+owncache = "../data/SingleCell/TcellTransfer/cache_stroma/"
 
 violintheme = theme(axis.text = element_text(size = 8),
         plot.title = element_text(size = 8),
@@ -70,13 +71,15 @@ if(file.exists(owncache)){
 
 # Initial data 
 
-
-```{r loaddata}
+```{r normalize}
 
 if(!file.exists(paste0(owncache,"first_dr.RData"))){
-  alldata = readRDS(paste0(datadir,"immune_data.rds"))
 
-DefaultAssay(alldata) = "RNA"
+  alldata = readRDS(paste0(datadir,"stroma_data.rds"))
+  
+  alldata = SetIdent(alldata, value = "orig.ident")
+  
+  DefaultAssay(alldata) = "RNA"
 
 suppressWarnings(
   suppressMessages(
@@ -207,13 +210,16 @@ FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), raster =
 ```{r}
 
 
-plan("multisession", workers = 8)
 
 if(!file.exists(paste0(owncache,"integration.RData"))){
   if(!file.exists(paste0(owncache,"anchors.RData"))){
+    
+    plan("sequential")
+
     alldata <- SplitObject(alldata, split.by = "orig.ident")
     
     alldata = lapply(alldata, function(x){
+      # message(length(Cells(x)))
         x <- NormalizeData(x, verbose = FALSE)
         x <- FindVariableFeatures(x, selection.method = "vst",
                 nfeatures = 2000, verbose = FALSE)
@@ -232,9 +238,15 @@ if(!file.exists(paste0(owncache,"integration.RData"))){
     gc()
     load(paste0(owncache,"anchors.RData"))
   }
- alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "CCA",
-     sample.tree = cbind(c(-4,-1,2,3,-8,5,-10,7,-15,9,4,8,11,12),
-                         c(-5,-2,-3,1,-7,-6,-11,-12,-14,-13,6,10,-9,13)))
+  
+  plan("multisession", workers = 4, gc = TRUE)
+  
+  # The order of integration (sample.tree) was not originally defined, 
+  # but is specified here for reproducibility
+  alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "CCA",
+     sample.tree = matrix(c(-3,-6,1,3,-11,-1,4,6,8,5,9,11,12,-8,
+                            -7,-14,-5,-13,-9,2,-2,-10,-12,10,7,-4), 
+                          ncol = 2))
   
   rm(data.anchors)
   gc()
@@ -345,20 +357,17 @@ clustree(alldata@meta.data, prefix = "CCA_snn_res.")
 ```{r}
 
 clusternames = 
-  data.frame(Cluster = c(0:16),
-             Clustername = c("CD4+ T cells Emb","Monocytes",
-                             "Cytotoxic CD4+","Macrophages Apoe",
-                             "NK","ILC2","ILC3","Proliferating",
-                             "Low counts","DC1","Neutrophils",
-                             "Mature DC","Treg","Mast cells",
-                             "Macrophages Retnla","pDC",
-                             "IFN response CD4+"))
+  data.frame(Cluster = c(0:15),
+             Clustername = c("FiB Has1","MyoC Hhip","Telocytes",
+                             "FiB Adamdec1","FiB Wnt4","MyoC Actc1",
+                             "Trophocytes","Endothelial","FiB Igfbp6",
+                             "Pericytes","MyoC Id4","Immune","Neurons",
+                             "ICC","ImmunoFiB","LEC"))
 
 clusterorder = 
-  c("CD4+ T cells Emb","Cytotoxic CD4+","Treg","IFN response CD4+",
-    "Proliferating","ILC2","ILC3","NK","Monocytes","Macrophages Apoe",
-    "Macrophages Retnla","DC1","Mature DC","pDC","Neutrophils",
-    "Mast cells","Low counts")
+  c("FiB Has1","FiB Adamdec1","FiB Wnt4","FiB Igfbp6","ImmunoFiB",
+    "Trophocytes","Telocytes","MyoC Hhip","MyoC Actc1","MyoC Id4",
+    "Endothelial","Pericytes","LEC","Neurons","ICC","Immune")
 
 alldata = AddMetaData(alldata, 
                       factor(clusternames$Clustername[
@@ -368,7 +377,7 @@ alldata = AddMetaData(alldata,
 
 alldata = SetIdent(alldata, value = "NamedCluster")
 
-color_list = get_color_list(17)
+color_list = get_color_list(16)
 names(color_list) = clusterorder
 
 ```
@@ -416,18 +425,13 @@ for (i in unique(top25$cluster)) {
 
 ```{r}
 
-markergenes = c('Icos', 'Il7r', 'Cd3d', 'Cd3e', 'Cd3g', 'Cd4',
-                'Emb', 'Lef1', 'Cxcr6', 'Ccl5', 'Eomes', 'Gzmk',
-                'Cd8a', 'Tnfrsf4', 'Ctla4', 'Foxp3', 'Tnfsf8',
-                'Ifit1', 'Zbp1', 'Stmn1', 'Mki67', 'Gata3', 'Areg', 
-                'Il22', 'Nrgn', 'Gpr183', 'Ncr1', 'Xcl1', 'Klrc1',
-                'Cd19', 'Ms4a1', 'Bank1', 'Jchain', 'Mzb1', 'Cd14',
-                'Csf1r', 'Lyz2', 'Ms4a6d', 'Apoe', 'C1qa', 'Mafb',
-                'Retnla', 'Fn1', 'Cd74', 'Ly6c2', 'Xcr1', 'Cd86',
-                'Ccr7', 'Irf8', 'Bst2', 'Siglech', 'S100a9', 'S100a8',
-                'Cpa3', 'Mcpt1', 'Retnlg'
-)
-
+markergenes = 
+  c("Cd34","Col1a1","Grem1","Has1","Pdpn","Igfbp3","Adamdec1",
+    "Col6a5","Wnt4","Igfbp6","Gas1","Clu","Ccl19","Cxcl13",
+    "Pdgfra","Ptn","Fibin","Wnt5a","Bmp5","Foxl1","Myh11","Acta2",
+    "Myl9","Hhip","Actc1","Id4","Plvap","Cdh5","Cd81","Cxcl12",
+    "Rgs5","Pdgfrb","Pln","Ccl21a","Lyve1","Prox1","Nog","Pcp4",
+    "Nrtn","Kit","Etv1","Ano1","Ptprc")
 
 ```
 
@@ -600,86 +604,6 @@ for(ds in datasets){
 }
 
 barplot + geom_bar(stat = "identity", width = 0.6, color = "black")
-
-```
-
-# CITE-seq
-
-```{r}
-
-DefaultAssay(alldata) = "FB"
-
-alldata <- NormalizeData(alldata)
-alldata <- ScaleData(alldata)
-  
-```
-
-
-
-```{r, fig.height = 2.2, fig.width = 2.3}
-
-alldata@active.assay <- "FB"
-
-dot = DotPlot(alldata, assay = "FB", features = featureorder, group.by = "Named_clusters") 
-dot = dot + aes(x = id, y = features.plot) + scale_x_discrete(position = "top") +
-  labs(y = "Antibodies",x = "Clusters") +
-  scale_size(range = c(0.1,2.5), breaks = c(60,80,100)) +
-  theme(legend.position = "bottom", legend.title = element_blank(),
-        axis.text.x = element_text(size = 6, hjust = 0, angle = 90),
-        axis.text.y = element_text(size = 6),
-        legend.key.width = unit(0.3, "cm"),
-        legend.key.height = unit(0.3,"cm"),
-        legend.text = element_text(size = 6),
-        axis.title.y = element_text(size = 8),
-        axis.title.x = element_blank())
-
-dot + theme(legend.position = "none")
-plot_grid(get_legend(dot))
-
-```
-
-
-# Subset analyses
-
-
-```{r}
-
-alldata = AddMetaData(alldata, alldata$NamedCluster, "stemcolono")
-alldata = AddMetaData(alldata, alldata$NamedCluster, "goblet")
-
-alldata$stemcolono[!(alldata$stemcolono %in% 
-                  c("ISC","TA G1-S","TA S-G2","TA G2-M",
-                 "Colonocytes"))] = NA
-
-alldata$goblet[!(alldata$goblet %in% 
-                  c("Goblet", "Goblet Reg4"))] = NA
-
-
-```
-
-```{r, fig.height = 3, fig.width = 9}
-
-plot_grid(plotlist = lapply(c("stemcolono","goblet"),
-       function(x){
-         dp = DimPlot(alldata, group.by = x, label = TRUE, shuffle = TRUE) +
-            scale_color_manual(values = color_list, na.value = "#CACACA") +
-            dimtheme & NoLegend() & NoAxes()
-         dp$layers[[2]]$aes_params$size = 3
-         dp
-       }), ncol = 3)
-
-```
-
-```{r}
-
-stemcolono = 
-  subset(alldata, 
-         cells = WhichCells(alldata, expression = 
-                              stemcolono %in% alldata$NamedCluster))
-goblet = subset(alldata, cells = WhichCells(alldata, expression = goblet %in% alldata$NamedCluster))
-
-rm(alldata)
-gc()
 
 ```
 

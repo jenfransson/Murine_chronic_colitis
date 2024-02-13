@@ -84,7 +84,6 @@ if(!file.exists(paste0(owncache,"first_dr.RData"))){
                                       expression = nFeature_RNA>2000 | 
                                         orig.ident != "G_10W_STR"))
   
-  
   suppressWarnings(suppressMessages(alldata <- FindVariableFeatures(alldata, selection.method = "vst", 
     nfeatures = 2000, verbose = FALSE, assay = "RNA")))
 
