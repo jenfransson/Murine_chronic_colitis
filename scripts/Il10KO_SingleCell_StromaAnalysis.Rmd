@@ -26,6 +26,7 @@ knitr::opts_chunk$set(fig.width  = 7,
 ```
 
 
+This report describes the analysis performed on scRNA-seq data from stromal cells isolated from Il10-/- mouse colons. The data has first been processed together with immune and epithelial cells, see "Il10KO_SingleCell_DataPreparation.html". The data object produced from that analysis is saved as the object data/SingleCell/Il10KO/R_objects/stroma_data.rds.
 
 
 ```{r setup}
@@ -104,7 +105,7 @@ if(!file.exists(paste0(owncache,"first_dr.RData"))){
 
 ```
 
-# Plot QC vars
+# Quality control
 
 Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
 

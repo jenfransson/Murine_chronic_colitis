@@ -19,37 +19,90 @@ source("gaussian_smoothing.R")
 set.seed(1)
 
 
-ggplotColours <- function(n = 6, h = c(0, 360) + 15){
-  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
-  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
-}
-viridis_colors = unique(c(viridis::viridis(7),viridis::viridis(8)))
-names(viridis_colors) = unique(c(as.character(seq(0,1,length.out = 7)),
-                                 as.character(seq(0,1,length.out = 8))))
+viridis_colors = c(viridis::viridis(7),viridis::viridis(8))
+names(viridis_colors) = c(seq(0,60,10), 0:7)
 
-makeViolins_Tcelltransfer <- function(
-  Groups, features, relvln = c(2.2,1), ybreaks = 0:10){
+showfactors_TCT = function(Groups, relvln = c(2.2,1)){
+  factors = colnames(Groups[[1]]@meta.data)[
+    grep("^nmf_", colnames(Groups[[1]]@meta.data))]
+  
+  Groups = lapply(Groups, function(x){
+    AddMetaData(x, gsub("[WD]","",x$Time), "TimeNumber")
+  })
   
   allmeta = do.call("rbind", lapply(Groups, function(x){x@meta.data}))
   
   groupnames = c("SCID","+ \U03B1  IL12","Rag2","+ \U03B1  IL12")
   names(groupnames) = c("SCID ut", "SCID il", "Rag2 ut", "Rag2 il")
   
+  
+  bars = lapply(as.numeric(gsub("nmf_","",factors)),function(i){
+    barbreaks = seq(0,1,0.2)
+    if(max(Groups[[1]]@reductions$NMF@feature.loadings[,i])<0.2){
+      barbreaks = seq(0,1,0.1)
+    }
+    x = FactorGeneLoadingPlot(Groups[[1]], factor = i, topn = 10) +
+      scale_y_continuous(expand = expansion(mult = 0),
+                         breaks = barbreaks) + 
+      theme(axis.text.y = element_text(face = "italic",
+                                       size = 8, color = "black"),
+            axis.text.x = element_text(size = 8, color = "black"),
+            axis.title.y = element_blank(),
+            axis.title.x = element_text(size = 8,hjust = 0),
+            plot.margin = margin(t = 1, b = 1, l = 3, unit = "pt")) +
+      labs(y = "Weight")
+    x$layers[[1]]$aes_params$colour = NA
+    x 
+  })
+  
+  
   vlnlist = list()
   for(i in names(Groups)){
     message(i)
-    vlnlist[[i]] = VlnPlot(Groups[[i]],
-                           features = features,
+    y = VlnPlot(Groups[[i]],
+                           features = factors,
                            group.by = "TimeNumber",
                            pt.size = 0.1,
                            combine = FALSE)
+    y = lapply(y, function(x){
+    x$layers[[2]]$aes_params$alpha =0.2
+    x$layers[[2]]$aes_params$colour = "#888888"
+    x$layers[[2]]$aes_params$shape = 16
+    
+    violin = x$layers[[1]]
+    points = x$layers[[2]]
+    violin$aes_params$alpha = 0.3
+    violin$aes_params$size = 0.3
+    x$layers[[1]] = rasterise(points, dpi = 300)
+    x$layers[[2]] = violin
+    x + NoLegend() + scale_y_continuous(breaks = 1:10) + 
+      theme(axis.title.y = element_blank(),
+            axis.title.x = element_text(
+              size = 8,
+              margin = margin(t = 1, r = 1, b = 1, l = 1,
+                              unit = "pt"),
+              hjust = 0),
+            plot.title = element_text(
+              size = 8, hjust = 0,
+              margin = margin(t = 3, r = 1, b = 1, l = 1, unit = "pt"),
+              face = "bold"
+            ),
+            axis.text = element_text(size = 8),
+            axis.text.x = element_text(angle = 0, 
+                                       hjust = 0.5)) +
+      scale_fill_manual(values = viridis_colors)
+    })
+    
+    vlnlist[[i]] = y
   }
   
   gridlist = list()
   
   for(i in 1:length(vlnlist[[1]])){
+    message(i)
     plots =  lapply(vlnlist, `[[`, i)
     names(plots) = names(vlnlist)
+    
     ymax = max(sapply(plots, function(x){
       max(x$data[,1])
     }))
@@ -67,10 +120,6 @@ makeViolins_Tcelltransfer <- function(
         x = plots[[n]]
         model = (substr(n,1,4) == "Rag2")+1
         df = x$data
-        df$RelTime <- as.character(allmeta[rownames(df),"RelTime"])
-        x$data = df
-        x$layers[[1]]$mapping$fill <- as.name("RelTime")
-        x$mapping$fill = NULL
         
         colnames(df)[1] <- "y"
         df.summary <- df %>%
@@ -80,57 +129,45 @@ makeViolins_Tcelltransfer <- function(
             m = mean(y)
           )
         
-        x$layers[[2]]$aes_params$alpha =0.2
-        x$layers[[2]]$aes_params$colour = "#888888"
-        x$layers[[2]]$aes_params$shape = 16
         
         
-        
-        violin = x$layers[[1]]
-        points = x$layers[[2]]
-        #points$aes_params$alpha = 0.4
-        violin$aes_params$alpha = 0.3
-        violin$aes_params$size = 0.3
-        x$layers[[1]] = rasterise(points, dpi = 300)
-        x$layers[[2]] = violin
-        
-        x = x + NoLegend() + scale_y_continuous(breaks = ybreaks) + 
-          coord_cartesian(ylim=c(0,ymax*1.1)) +
+        x = x + 
+          
           labs(x = paste(c("Weeks","Days")[model],
                          "post naive CD4+ TCT")) +
-          theme(axis.title.y = element_blank(),
-                axis.title.x = element_text(size = 8,
-                                            margin = margin(t = 1, r = 1, b = 1, l = 1,
-                                                            unit = "pt"),
-                                            hjust = 0),
-                plot.title = element_text(size = 8, hjust = 0,
-                                          margin = margin(t = 3, r = 1, b = 1, l = 1, unit = "pt"),
-                                          face = "bold"
-                ),
-                #plot.title = element_blank(),
-                axis.text = element_text(size = 8),
-                axis.text.x = element_text(angle = 0, 
-                                           hjust = 0.5),
-                plot.margin = margin(t = c(0,2)[model], r = 1, b = c(2,0)[model], l = 1, unit = "pt")) + 
-          #geom_errorbar(aes(ymin = m, ymax = m+sd, y = m),data = df.summary, 
-          #          #      color = "red", 
-          #              width = 0.25) +
+          coord_cartesian(ylim=c(0,ymax*1.1)) +
+          theme(plot.margin = margin(t = c(0,2)[model], r = 1, b = c(2,0)[model], l = 1, unit = "pt")) + 
           geom_point(aes(y = m),data = df.summary, 
-                     #     color = "red", 
                      size = 1) + 
-          labs(title = groupnames[[n]]) +
-          scale_fill_manual(values = viridis_colors)
+          labs(title = groupnames[[n]])
         if(n %in% c("Rag2 il","SCID il")){
           x = x + theme(axis.text.y = element_blank(),
                         axis.title.x = element_blank())
         }
         x
       }), rel_widths = relvln, align = "h"), ncol = 1#,
-      #rel_heights = c(1,10)
     ))
   }
   
-  return(gridlist)
+  plots <- lapply(1:length(gridlist), function(i){
+    print(plot_grid(
+      ggdraw() + 
+        draw_label(
+          "Factor score",
+          hjust = 0.5, 
+          size =  8, angle = 90
+        ),
+      plot_grid(ggdraw() + 
+                  draw_label(
+                    i,
+                    fontface = 'bold',
+                    hjust = 0.5, 
+                    size =  10
+                  ),
+                plot_grid(gridlist[[i]] + theme(plot.title = element_blank()),
+                          bars[[i]], ncol = 2, rel_widths = c(2,1)), 
+                rel_heights = c(1,6), ncol = 1), nrow = 1, rel_widths = c(1,10)))
+  })
 }
 
 

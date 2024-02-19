@@ -1,5 +1,5 @@
 ---
-title: "Preparation of data for T cell transfer single cell analysis"
+title: "T cell transfer single cell analysis - Immune fraction"
 editor_options:
   chunk_output_type: console
 date: "`r format(Sys.time(), '%d %B, %Y')`"
@@ -33,9 +33,16 @@ library(clustree)
 
 library(future)
 plan("sequential")
+options(future.globals.maxSize = 50 * 1024^3)
+
+if(!require("NNLM")){
+  devtools::install_github('linxihui/NNLM')
+}
 
 source("../code/SingleCell/color_list.R")
 source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
+
+txt = element_text(size = 8)
 
 
 ```
@@ -207,10 +214,13 @@ FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), raster =
 ```{r}
 
 
-plan("multisession", workers = 8)
+plan("multisession", workers = 6)
+
 
 if(!file.exists(paste0(owncache,"integration.RData"))){
   if(!file.exists(paste0(owncache,"anchors.RData"))){
+
+    # Works with 256GB on 6 workers
     alldata <- SplitObject(alldata, split.by = "orig.ident")
     
     alldata = lapply(alldata, function(x){
@@ -232,7 +242,11 @@ if(!file.exists(paste0(owncache,"integration.RData"))){
     gc()
     load(paste0(owncache,"anchors.RData"))
   }
- alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "CCA",
+  
+  plan("sequential")
+  
+  # works with 256GB in sequential 
+  alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "CCA",
      sample.tree = cbind(c(-4,-1,2,3,-8,5,-10,7,-15,9,4,8,11,12),
                          c(-5,-2,-3,1,-7,-6,-11,-12,-14,-13,6,10,-9,13)))
   
@@ -368,7 +382,7 @@ alldata = AddMetaData(alldata,
 
 alldata = SetIdent(alldata, value = "NamedCluster")
 
-color_list = get_color_list(17)
+color_list = get_color_list(length(clusternames$Clustername))
 names(color_list) = clusterorder
 
 ```
@@ -386,30 +400,43 @@ dp
 
 # Differential expression
 
-```{r}
-
-sel.lev = 0.5
-sel.clust = paste0("CCA_snn_res.",sel.lev)
-
-alldata <- SetIdent(alldata, value = sel.clust)
-
-```
 
 ```{r}
 
-markers_genes <- FindAllMarkers(alldata, logfc.threshold = 0.2, test.use = "wilcox", 
+
+alldata@active.assay = "RNA"
+alldata = NormalizeData(alldata)
+alldata = FindVariableFeatures(alldata)
+
+# Becomes slower when parallel
+
+plan("sequential")
+
+if(!file.exists(paste0(owncache, "clustermarkers.rds"))){
+  markers_genes <- FindAllMarkers(alldata, logfc.threshold = 0.2, test.use = "wilcox", 
     min.pct = 0.1, min.diff.pct = 0.2, only.pos = TRUE, max.cells.per.ident = 1000, 
     assay = "RNA", random.seed = 42)
+            
+  if(file.exists(owncache)){
+    saveRDS(markers_genes, paste0(owncache, "clustermarkers.rds"))
+  }
+}else{
+   markers_genes = readRDS(paste0(owncache, "clustermarkers.rds"))
+}
 
 top25 <- markers_genes %>% group_by(cluster) %>% top_n(-25, p_val)
 
-mypar(2, 5, mar = c(4, 6, 3, 1))
-for (i in unique(top25$cluster)) {
-    barplot(sort(setNames(top25$avg_log2FC, top25$gene)[top25$cluster == i], F),
-            horiz = T, 
-        las = 1, main = paste0(i, " vs. rest"), border = "white", yaxs = "i")
-    abline(v = c(0, 0.25), lty = c(1, 2))
-}
+out = lapply(unique(top25$cluster), function(i){
+  markersdata = top25[top25$cluster==i,]
+  markersdata$gene = factor(markersdata$gene, levels = rev(markersdata$gene))
+  print(ggplot(markersdata, aes(x = avg_log2FC, y = gene)) + 
+          labs(title = i) + 
+    geom_bar(stat = "identity") + 
+    theme(axis.title.y = element_blank(),
+          axis.title.x = element_text(size = 8),
+          plot.title = element_text(size = 8),
+          axis.text = element_text(size = 8)))
+})
 
 ```
 
@@ -428,180 +455,33 @@ markergenes = c('Icos', 'Il7r', 'Cd3d', 'Cd3e', 'Cd3g', 'Cd4',
                 'Cpa3', 'Mcpt1', 'Retnlg'
 )
 
-
 ```
 
 ```{r dotplot, fig.height = 2.2, fig.width = 6}
 
-alldata@active.ident = factor(alldata$namedcluster, levels = rev(clusterorder))
-dot = DotPlot(alldata, features=markergenes)
-dot = dot + aes(x = id, y = features.plot) +
-  scale_y_discrete(position = "right") + 
-  coord_flip() + 
+alldata@active.assay = "RNA"
+
+alldata@active.ident = factor(alldata$NamedCluster, levels = clusterorder)
+dot = DotPlot(alldata, features=rev(markergenes))
+dot = dot + aes(x = id, y = features.plot) + scale_x_discrete(position = "top") + 
   labs(y = "Genes",x = "Clusters") + 
   scale_size(range = c(0.5,2.5), breaks = c(0,50,100), limits = c(0,100)) +
-  theme(legend.position = "right", legend.title = element_blank(),
-        axis.text.x.top = element_text(size = 6, angle = 90, vjust =0.5,
-                                   hjust = 0, face = "italic"),
-        axis.text.y = element_text(size = 6),
+  theme(legend.position = "none", legend.title = element_blank(),
+        axis.text.x = element_text(size = 6, angle = 90, hjust = 0),
+        axis.text.y = element_text(size = 6, face = "italic"),
         legend.key.width = unit(0.3, "cm"), 
         legend.key.height = unit(0.3,"cm"), 
         legend.text = element_text(size = 6),
-        axis.title = element_text(size = 8))
+        axis.title = element_text(size = 8)) 
+
 dot$scales$scales[[1]]$limits = c(-1.8,2.7)
 
 print(dot)
 
-```
-
-```{r annotateddimplot}
-
-plot_grid(ncol = 2, DimPlot(alldata, label = T, group.by = "namedcluster") +
-            NoAxes() + NoLegend() + scale_color_manual(values = color_list))
+plot_grid(get_legend(dot + theme(legend.position = "bottom")))
 
 ```
 
-# Population changes over time
-
-```{r}
-
-clean_sample_names = function(sam){
-  for(s in c("_Imm","I_","_Epi","_E","_Str","S_","_ut","G_", "_aIL12","_il")){
-    sam = gsub(s, "",sam)
-  }
-  sam
-}
-
-```
-
-
-
-```{r}
-
-frequencies = as.data.frame(table(data.frame(cluster=metadata_all[,sel.clust],
-                 sample = metadata_all$orig.ident, model = metadata_all$Model)))
-frequencies$Proportion=NA
-for(i in 1:nrow(frequencies)){
-  frequencies$Proportion[i] =
-    frequencies$Freq[i]/
-    sum(frequencies$Freq[frequencies$sample==frequencies$sample[i]])
-}
-
-frequencies$time = metadata_all$Time[match(frequencies$sample, metadata_all$orig.ident)]
-frequencies$treatment = metadata_all$Treatment[match(frequencies$sample, 
-                                                     metadata_all$orig.ident)]
-
-frequencies$namedcluster = clusternames[match(frequencies$cluster,
-                                              clusternames$Cluster),
-                                   paste0(celltype,"_clusters")]
-frequencies$namedcluster = factor(frequencies$namedcluster, 
-                                  levels = clusternames[
-                                    clusternames[,paste0(celltype,"_order")]!="",
-                                    paste0(celltype,"_order")])
-
-cumulFreq = frequencies
-cumulFreq$cumulProp = NA
-for(i in unique(cumulFreq$sample)){
-  cumulFreq$cumulProp[cumulFreq$sample %in% i] = rev(cumsum(rev(cumulFreq$Proportion[cumulFreq$sample %in% i])))
-}
-cumulFreq = rbind(cumulFreq,cumulFreq)
-cumulFreq$xadj = rep(c(-1,1), c(nrow(frequencies),nrow(frequencies)))
-cumulFreq$oldtime = cumulFreq$time
-cumulFreq$time = as.numeric(gsub("D","",gsub("W","",as.character(cumulFreq$time))))
-
-
-cleanfrequencies = frequencies[
-  (substr(frequencies$time,1,1) == "W" & frequencies$model == "SCID") |
-    (substr(frequencies$time,1,1) == "D" & frequencies$model == "Rag2"),]
-
-clustercors = lapply(c("SCID","Rag2"), function(bg){
-  corlist = lapply(unique(cleanfrequencies$namedcluster), function(i){
-    clufreq = cleanfrequencies[cleanfrequencies$namedcluster==i  & 
-                          cleanfrequencies$treatment == "untreated" & 
-                          cleanfrequencies$model == bg,]
-
-    clucor = cor(clufreq$Proportion,as.numeric(as.factor(as.character(clufreq$time))))
-    clucor
-    })
-  names(corlist) = unique(cleanfrequencies$namedcluster)
-  corlist
-  })
-names(clustercors) = c("SCID","Rag2")
-
-averagecor = lapply(1:length(clustercors[[1]]), function(i){
-  mean(c(clustercors[[1]][[i]], clustercors[[2]][[i]]))
-})
-names(averagecor) = names(clustercors[[1]])
-
-cleanfrequencies$namedcluster = 
-  factor(cleanfrequencies$namedcluster, 
-         levels = names(averagecor)[order(unlist(averagecor), decreasing = TRUE)])
-cumulFreq$namedcluster = 
-  factor(cumulFreq$namedcluster,
-         levels = names(averagecor)[order(unlist(averagecor), decreasing = TRUE)])
-
-cleanfrequencies$sample = 
-  factor(cleanfrequencies$sample, 
-         levels = 
-           unique(cleanfrequencies$sample[
-             order(factor(cleanfrequencies$model, levels = c("SCID","Rag2")),
-                   cleanfrequencies$treatment,
-                   cleanfrequencies$time)]))
-cleanfrequencies$samplenumber = as.numeric(cleanfrequencies$sample)
-
-cumulFreq = cumulFreq[paste(cumulFreq$sample,
-                cumulFreq$model,
-                cumulFreq$oldtime) %in% 
-            paste(cleanfrequencies$sample,
-                  cleanfrequencies$model,
-                  cleanfrequencies$time),]
-
-cumulFreq$sample =
-  factor(cumulFreq$sample, 
-         levels = 
-           unique(cumulFreq$sample[order(factor(cumulFreq$model, levels = c("SCID","Rag2")),
-                                         cumulFreq$treatment,
-                                         cumulFreq$time)]))
-cumulFreq$samplenumber = as.numeric(cumulFreq$sample)
-
-
-datasets = lapply(names(clustercors), function(bg){
-  bgfreq = cleanfrequencies[cleanfrequencies$model == bg,]
-  bglist = lapply(unique(bgfreq$treatment), function(i){
-    trfr = bgfreq[bgfreq$treatment==i,]
-    cumtrfr = cumulFreq[paste(cumulFreq$sample,
-                                     cumulFreq$model,
-                                     cumulFreq$oldtime) %in% 
-                                 paste(trfr$sample,
-                                       trfr$model,
-                                       trfr$time),]
-    list(trfr, cumtrfr)
-  })
-  names(bglist) = unique(bgfreq$treatment)
-  bglist
-})
-
-barplot = ggplot(data = cleanfrequencies, 
-       aes(x = samplenumber, y = Proportion, fill = namedcluster)) + 
-  theme(panel.background = element_blank(), axis.title.x = element_blank(),
-        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
-            scale_fill_manual(values =
-                                color_list[as.character(unique(sort(bgfreq$namedcluster)))]) + 
-            scale_x_continuous(breaks = sort(unique(cleanfrequencies$samplenumber)),
-                               labels = clean_sample_names(levels(cleanfrequencies$sample)))
-
-for(ds in datasets){
-  for(dst in ds){
-    barplot = barplot + 
-      geom_area(data = dst[[2]],
-                alpha = 0.7, size = 0.3, stat = 'identity',
-                aes(fill = namedcluster, group = namedcluster,
-                    y = Proportion, x = samplenumber + xadj*0.3))}
-}
-
-barplot + geom_bar(stat = "identity", width = 0.6, color = "black")
-
-```
 
 # CITE-seq
 
@@ -620,7 +500,8 @@ alldata <- ScaleData(alldata)
 
 alldata@active.assay <- "FB"
 
-dot = DotPlot(alldata, assay = "FB", features = featureorder, group.by = "Named_clusters") 
+dot = DotPlot(alldata, assay = "FB", features = rev(rownames(alldata)), 
+              group.by = "NamedCluster") 
 dot = dot + aes(x = id, y = features.plot) + scale_x_discrete(position = "top") +
   labs(y = "Antibodies",x = "Clusters") +
   scale_size(range = c(0.1,2.5), breaks = c(60,80,100)) +
@@ -631,7 +512,8 @@ dot = dot + aes(x = id, y = features.plot) + scale_x_discrete(position = "top") 
         legend.key.height = unit(0.3,"cm"),
         legend.text = element_text(size = 6),
         axis.title.y = element_text(size = 8),
-        axis.title.x = element_blank())
+        axis.title.x = element_blank()) +
+  scale_y_discrete(labels = function(x){gsub("-TotalSeqB","",x)})
 
 dot + theme(legend.position = "none")
 plot_grid(get_legend(dot))
@@ -639,44 +521,198 @@ plot_grid(get_legend(dot))
 ```
 
 
-# Subset analyses
+# Population changes over time
+
+```{r}
+
+clean_sample_names = function(sam){
+  for(s in c("_Imm","I_","_Epi","_E","_Str","S_","_ut","G_", "_aIL12","_il")){
+    sam = gsub(s, "",sam)
+  }
+  sam
+}
+
+```
+
 
 
 ```{r}
 
-alldata = AddMetaData(alldata, alldata$NamedCluster, "stemcolono")
-alldata = AddMetaData(alldata, alldata$NamedCluster, "goblet")
+alldata$Treatment = factor(alldata$Treatment,
+                           levels = c("ut","il"))
 
-alldata$stemcolono[!(alldata$stemcolono %in% 
-                  c("ISC","TA G1-S","TA S-G2","TA G2-M",
-                 "Colonocytes"))] = NA
+frequencies = as.data.frame(table(data.frame(cluster=alldata$NamedCluster,
+                 sample = alldata$orig.ident, model = alldata$Model)))
+frequencies$Proportion=NA
+for(i in 1:nrow(frequencies)){
+  frequencies$Proportion[i] =
+    frequencies$Freq[i]/
+    sum(frequencies$Freq[frequencies$sample==frequencies$sample[i]])
+}
 
-alldata$goblet[!(alldata$goblet %in% 
-                  c("Goblet", "Goblet Reg4"))] = NA
+frequencies$time = alldata$Time[match(frequencies$sample,
+                                      alldata$orig.ident)]
+frequencies$treatment = 
+  alldata$Treatment[match(frequencies$sample, 
+                          alldata$orig.ident)]
 
+frequencies = frequencies[
+  (substr(frequencies$time,1,1) == "W" & frequencies$model == "SCID") |
+    (substr(frequencies$time,1,1) == "D" & frequencies$model == "Rag2"),]
+
+
+clustercors = lapply(c("SCID","Rag2"), function(bg){
+  corlist = lapply(unique(frequencies$cluster), function(i){
+    clufreq = frequencies[frequencies$cluster==i  & 
+                          frequencies$treatment == "ut" & 
+                          frequencies$model == bg,]
+
+    clucor = cor(clufreq$Proportion,as.numeric(
+      as.factor(as.character(clufreq$time))))
+    clucor
+    })
+  names(corlist) = unique(frequencies$cluster)
+  corlist
+  })
+names(clustercors) = c("SCID","Rag2")
+
+averagecor = lapply(1:length(clustercors[[1]]), function(i){
+  mean(c(clustercors[[1]][[i]], clustercors[[2]][[i]]))
+})
+names(averagecor) = names(clustercors[[1]])
+
+frequencies$cluster = 
+  factor(frequencies$cluster, 
+         levels = names(averagecor)[order(unlist(averagecor),
+                                          decreasing = TRUE)])
+
+frequencies$sample = 
+  factor(frequencies$sample, 
+         levels = 
+           unique(frequencies$sample[
+             order(factor(frequencies$model, levels = c("SCID","Rag2")),
+                   frequencies$treatment,
+                   frequencies$time)]))
+frequencies$samplenumber = as.numeric(frequencies$sample)
+
+
+cumulFreq = frequencies
+cumulFreq$cumulProp = NA
+for(i in unique(cumulFreq$sample)){
+  cumulFreq$cumulProp[cumulFreq$sample %in% i] = rev(cumsum(rev(cumulFreq$Proportion[cumulFreq$sample %in% i])))
+}
+cumulFreq = rbind(cumulFreq,cumulFreq)
+cumulFreq$xadj = rep(c(-1,1), c(nrow(frequencies),nrow(frequencies)))
+cumulFreq$oldtime = cumulFreq$time
+cumulFreq$time = as.numeric(
+  gsub("D","",gsub("W","",as.character(cumulFreq$time))))
+
+
+datasets = lapply(names(clustercors), function(bg){
+  bgfreq = frequencies[frequencies$model == bg,]
+  bglist = lapply(unique(bgfreq$treatment), function(i){
+    trfr = bgfreq[bgfreq$treatment==i,]
+    cumtrfr = cumulFreq[paste(cumulFreq$sample,
+                                     cumulFreq$model,
+                                     cumulFreq$oldtime) %in% 
+                                 paste(trfr$sample,
+                                       trfr$model,
+                                       trfr$time),]
+    list(trfr, cumtrfr)
+  })
+  names(bglist) = unique(bgfreq$treatment)
+  bglist
+})
+
+barplot = ggplot(data = frequencies, 
+       aes(x = samplenumber, y = Proportion, fill = cluster)) + 
+  theme(panel.background = element_blank(), axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+            scale_fill_manual(
+              values =
+                color_list[as.character(unique(sort(frequencies$cluster)))]) + 
+            scale_x_continuous(
+              breaks = sort(unique(frequencies$samplenumber)),
+              labels = clean_sample_names(levels(frequencies$sample)))
+
+for(ds in datasets){
+  for(dst in ds){
+    barplot = barplot + 
+      geom_area(data = dst[[2]],
+                alpha = 0.7, size = 0.3, stat = 'identity',
+                aes(fill = cluster, group = cluster,
+                    y = Proportion, x = samplenumber + xadj*0.3))}
+}
+
+barplot + geom_bar(stat = "identity", width = 0.6, color = "black")
 
 ```
 
-```{r, fig.height = 3, fig.width = 9}
+# Subset analyses
 
-plot_grid(plotlist = lapply(c("stemcolono","goblet"),
+```{r}
+
+DefaultAssay(alldata) = "RNA"
+
+alldata$ModelTreatmentTime = paste(alldata$Model, 
+                                     alldata$Treatment, 
+                                     alldata$Time)
+alldata$ModelTreatmentTime = factor(alldata$ModelTreatmentTime,
+      levels = unique(alldata$ModelTreatmentTime[order(
+        factor(alldata$Model, levels = c("SCID", "Rag2")),
+        factor(alldata$Treatment, levels = c("ut","il")),
+        alldata$Time)]))
+alldata$ModelTreatment = paste(alldata$Model, 
+                                     alldata$Treatment)
+alldata$ModelTreatment = factor(alldata$ModelTreatment,
+      levels = unique(alldata$ModelTreatment[order(
+        factor(alldata$Model, levels = c("SCID", "Rag2")),
+        factor(alldata$Treatment, levels = c("ut","il")))]))
+
+alldata = AddMetaData(alldata, alldata$NamedCluster, "CD4Tcells")
+alldata = AddMetaData(alldata, alldata$NamedCluster, "neutrophils")
+
+alldata$CD4Tcells[!(alldata$CD4Tcells %in% 
+                  c("CD4+ T cells Emb","Cytotoxic CD4+",
+                    "Treg","IFN response CD4+"))] = NA
+alldata$CD4Tcells[alldata$RelTime < 0.1] = NA
+
+alldata$neutrophils[!(alldata$neutrophils %in% 
+                  c("Neutrophils"))] = NA
+
+```
+
+```{r, fig.height = 3, fig.width = 6}
+
+plot_grid(plotlist = lapply(c("CD4Tcells","neutrophils"),
        function(x){
          dp = DimPlot(alldata, group.by = x, label = TRUE, shuffle = TRUE) +
             scale_color_manual(values = color_list, na.value = "#CACACA") +
             dimtheme & NoLegend() & NoAxes()
          dp$layers[[2]]$aes_params$size = 3
          dp
-       }), ncol = 3)
+       }), ncol = 2)
 
 ```
 
 ```{r}
 
-stemcolono = 
+alldata@active.assay <- "RNA"
+alldata[["CCA"]] = NULL
+
+alldata <- FindVariableFeatures(alldata)
+alldata <- ScaleData(alldata, features = VariableFeatures(alldata))
+
+CD4Tcells = 
   subset(alldata, 
-         cells = WhichCells(alldata, expression = 
-                              stemcolono %in% alldata$NamedCluster))
-goblet = subset(alldata, cells = WhichCells(alldata, expression = goblet %in% alldata$NamedCluster))
+         cells = WhichCells(
+           alldata, expression = 
+             CD4Tcells %in% alldata$NamedCluster))
+neutrophils = 
+  subset(alldata, 
+         cells = WhichCells(
+           alldata, 
+           expression = neutrophils %in% alldata$NamedCluster))
 
 rm(alldata)
 gc()
@@ -687,58 +723,6 @@ gc()
 
 # NMF
 
-```{r subsetting}
-
-
-# Making subsets
-
-## CD4
-
-CD4_color_list = color_list
-CD4_color_list[!(names(color_list) %in% clusterorder[1:4])] = NA
-DimPlot(alldata, group.by = "Named_cluster") + 
-  NoLegend() + NoAxes() +
-  scale_color_manual(values = CD4_color_list)
-
-CD4data = subset(alldata, idents = c(0,2,12,16))
-
-CD4data = CD4data[,CD4data$RelTime > 0.1]
-
-DefaultAssay(CD4data) = "RNA"
-CD4data[["CCA"]] = NULL
-
-CD4data <- ScaleData(CD4data)
-CD4data <- RunPCA(CD4data, npcs = 30, verbose = FALSE)
-CD4data <- RunUMAP(CD4data, dims = 1:30)
-
-CD4data <- FindVariableFeatures(CD4data)
-CD4data <- ScaleData(CD4data, features = VariableFeatures(CD4data))
-
-## Neutrophils
-
-neutrophil_color_list = color_list
-neutrophil_color_list[!(names(color_list) %in% "Neutrophils")] = NA
-DimPlot(alldata, group.by = "Named_cluster") + 
-  NoLegend() + NoAxes() +
-  scale_color_manual(values = neutrophil_color_list)
-
-neutrophildata = subset(alldata, idents = 10)
-
-DefaultAssay(neutrophildata) = "RNA"
-neutrophildata[["CCA"]] = NULL
-
-neutrophildata <- ScaleData(neutrophildata)
-neutrophildata <- RunPCA(neutrophildata, npcs = 30, verbose = FALSE)
-neutrophildata <- RunUMAP(neutrophildata, dims = 1:30)
-
-neutrophildata <- FindVariableFeatures(neutrophildata)
-neutrophildata <- ScaleData(neutrophildata, features = VariableFeatures(neutrophildata))
-
-
-rm(alldata)
-gc()
-
-```
 
 
 ## CD4 T cells
@@ -748,317 +732,324 @@ gc()
 ntop = 40
 downsample_n = 500
 
-nmf <- RunNMF(object = CD4data, assay = "RNA", nfactors = ntop,
-                n.cores = 1)
+if(!file.exists(paste0(owncache,"CD4_NMF.RData"))){
+
+  CD4Tcells@active.assay <- "RNA"
+  
+  CD4Tcells <- FindVariableFeatures(CD4Tcells)
+  CD4Tcells <- ScaleData(CD4Tcells, features = VariableFeatures(CD4Tcells))
+  
+  CD4Tcells <- RunNMF(object = CD4Tcells, assay = "RNA", nfactors = ntop,
+                  n.cores = 1)
+  
+  if(file.exists(owncache)){
+    save(CD4Tcells, file = paste0(owncache, "CD4_NMF.RData"))
+  }
+}else{
+   load(paste0(owncache, "CD4_NMF.RData"))
+}
+
 
 ```
 
 ```{r}
 
 for(i in 1:ntop){
-  nmf <- AddMetaData(nmf, nmf@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
-                     paste0("nmf_",i))
+  CD4Tcells <- 
+    AddMetaData(CD4Tcells, 
+                CD4Tcells@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+                paste0("nmf_",i))
 }
 
-nmf$ModelTreatmentTime = factor(nmf$ModelTreatmentTime,
-      levels = unique(nmf$ModelTreatmentTime[order(factor(nmf$Model, levels = c("SCID", "Rag2")),
-                                    factor(nmf$Treatment, levels = c("ut","il")),
-                                    nmf$Time)]))
-
-```
-
-```{r}
-
-
-breaksList = seq(-1, 1, by = 0.01)
-
-ph = pheatmap(cor(nmf@meta.data[,grep("^nmf", colnames(nmf@meta.data))]), 
-         color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)),
-         breaks = breaksList)
-
 
 ```
 
 
-```{r}
 
-Groups = SplitObject(nmf, split.by = "ModelTreatment")
-
-```
 
 
 ```{r}
 
+modelpvalues = getfactorpvalues_TCT(CD4Tcells, downsample = downsample_n, ntop)
 
-modelpvalues = getfactorpvalues(nmf, downsample = downsample_n, ntop)
-
-
-pvaluegg = melt(modelpvalues, variable.name = "factor", value.name =  "p.value")
-pvaluegg$factor = factor(pvaluegg$factor, levels = rev(paste0("nmf_",ph$tree_row$order)))
+pvaluegg = melt(modelpvalues, variable.name = "factor",
+                value.name =  "p.value")
 pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
 
 
-lmp = ggplot(pvaluegg,
-       aes(y = factor, x = depvar)) + 
-  geom_tile(aes(fill = -log10(p.value))) + 
-  scale_fill_viridis_c(option = "inferno", limits = c(0,NA)) + 
-  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
-  theme_classic() + 
-  scale_y_discrete(labels = function(x){gsub("nmf_", paste0(factorprefix,"f"),x)}) + 
-  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size = 8),
-        axis.title = element_blank(),
-        legend.title = element_text(size = 8),
-        legend.text = element_text(size = 8),
-        legend.key.size = unit(8,"pt"))
+CD4Tcells_values = CD4Tcells@meta.data[,grep("^nmf_", colnames(CD4Tcells@meta.data))]
 
-```
+CD4Tcells_scaled = apply(CD4Tcells_values, 2, scale)
 
-```{r}
+CD4Tcells_scaled_means_id = 
+  aggregate(CD4Tcells_scaled, 
+            by = list(CD4Tcells$ModelTreatmentTime), mean)
+CD4Tcells_means_id = 
+  aggregate(CD4Tcells_values, 
+            by = list(CD4Tcells$ModelTreatmentTime), mean)
+CD4Tcells_means_scaled_id = as.data.frame(apply(CD4Tcells_means_id[,-1], 2, scale))
+CD4Tcells_means_scaled_id$Group.1 = CD4Tcells_means_id$Group.1
 
-nmf_values = nmf@meta.data[,grep("^nmf_", colnames(nmf@meta.data))]
-
-nmf_scaled = apply(nmf_values, 2, scale)
-
-nmf_scaled_means_id = aggregate(nmf_scaled, by = list(nmf$ModelTreatmentTime), mean)
-nmf_means_id = aggregate(nmf_values, by = list(nmf$ModelTreatmentTime), mean)
-nmf_means_scaled_id = as.data.frame(apply(nmf_means_id[,-1], 2, scale))
-nmf_means_scaled_id$Group.1 = nmf_means_id$Group.1
-
-nmf_scaled_means_cluster = aggregate(nmf_scaled, by = list(nmf$named_cluster), mean)
-nmf_means_cluster = aggregate(nmf_values, by = list(nmf$named_cluster), mean)
-if(nrow(nmf_means_cluster)==1){
-  nmf_means_scaled_cluster = as.data.frame(rbind(apply(nmf_means_cluster[,-1], 2, scale)))
-  nmf_means_scaled_cluster$Group.1 = nmf_means_cluster$Group.1
-  nmf_means_scaled_cluster[1,is.nan(as.numeric(nmf_means_scaled_cluster[1,]))] = 0
+CD4Tcells_scaled_means_cluster = aggregate(CD4Tcells_scaled, by = list(CD4Tcells$NamedCluster), mean)
+CD4Tcells_means_cluster = aggregate(CD4Tcells_values, by = list(CD4Tcells$NamedCluster), mean)
+if(nrow(CD4Tcells_means_cluster)==1){
+  CD4Tcells_means_scaled_cluster = as.data.frame(rbind(apply(CD4Tcells_means_cluster[,-1], 2, scale)))
+  CD4Tcells_means_scaled_cluster$Group.1 = CD4Tcells_means_cluster$Group.1
+  CD4Tcells_means_scaled_cluster[1,is.nan(as.numeric(CD4Tcells_means_scaled_cluster[1,]))] = 0
 }else{
-  nmf_means_scaled_cluster = as.data.frame(apply(nmf_means_cluster[,-1], 2, scale))
-  nmf_means_scaled_cluster$Group.1 = nmf_means_cluster$Group.1
+  CD4Tcells_means_scaled_cluster = as.data.frame(apply(CD4Tcells_means_cluster[,-1], 2, scale))
+  CD4Tcells_means_scaled_cluster$Group.1 = CD4Tcells_means_cluster$Group.1
 }
 
-
 ```
 
 
+```{r, fig.show="hide"}
 
-```{r}
-
-ph_sample = pheatmap(nmf_means_scaled_id[,paste0("nmf_", 1:ntop)])
-
-```
-
-```{r, fig.width=3.4, fig.height=6}
+ph_sample = pheatmap(CD4Tcells_means_scaled_id[,paste0("nmf_", 1:ntop)])
 
 ph_order = ph_sample$tree_col$order
 
-txt = element_text(size = 8)
+```
 
-my_dotp_cl = ggplot(melt(nmf_means_scaled_cluster), 
+```{r, fig.width = 2.5, fig.height = 6}
+
+my_dotp = ggplot(melt(CD4Tcells_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + 
+  geom_vline(color = "white", xintercept = c(7.5,8.5)) +
+  scale_fill_viridis_c() + 
+  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt,
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_size_continuous(limits = c(0,100), range= c(0,3))
+
+my_dotp_cl = ggplot(melt(CD4Tcells_means_scaled_cluster), 
                  aes(x = Group.1, 
                      y = factor(variable, 
                                 levels = rev(paste0("nmf_",ph_order))))) +
   geom_tile(aes(fill = value)) + scale_fill_viridis_c() +
-  scale_x_discrete(labels = function(x){gsub("nmf_", paste0(factorprefix,"f"),x)}) + 
-  theme_classic() + 
+  theme_classic() +
   theme(axis.text = txt,
         axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
         axis.title = element_blank(),
         legend.text = txt,
+        axis.text.y = element_blank(),
+        legend.key.size = unit(8,"pt"),
+        plot.title = element_blank(),
+        legend.position = "bottom",
         legend.title = txt) + 
   scale_size_continuous(limits = c(0,100))
-
-my_dotp = ggplot(melt(nmf_means_scaled_id), 
-                 aes(x = Group.1, 
-                     y = factor(variable, 
-                                levels = rev(paste0("nmf_",ph_order))))) +
-  geom_tile(aes(fill = value)) + scale_fill_viridis_c() + 
-  theme_classic() + 
-  theme(axis.text = txt,
-        axis.title = element_blank(),
-        legend.text = txt,
-        legend.title = txt) + 
-  scale_x_discrete(labels = function(x){gsub("nmf_", paste0(factorprefix,"f"),x)}) + 
-  scale_size_continuous(limits = c(0,100), range= c(0,3)) +
-    labs(title = "Ordered by similarity") + 
-  theme(plot.title = element_text(size = 10),
-        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5))
-
-
 
 lmp = ggplot(pvaluegg,
        aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
   geom_tile(aes(fill = -log10(p.value))) + 
-  scale_fill_viridis_c(option = "inferno", limits = c(0,NA)) + 
+  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
   scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
   theme_classic() + 
-  scale_y_discrete(labels = function(x){gsub("nmf_", paste0(factorprefix,"f"),x)}) + 
   theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
-        axis.text.y = element_text(size = 8),
+        axis.text.y = element_blank(),
         axis.title = element_blank(),
         legend.title = element_text(size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
         legend.text = element_text(size = 8),
         legend.key.size = unit(8,"pt"))
 
+scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
+               max(my_dotp$data$value, my_dotp_cl$data$value))
 
-plot_grid(my_dotp_cl + 
+plot_grid(my_dotp + 
             scale_fill_viridis_c(limits = scalerange) + 
             theme(axis.title = element_blank(),
                   legend.position = "bottom",
                       legend.key.size = unit(8,"pt")),
-          my_dotp + 
-            scale_fill_viridis_c(limits = scalerange) +
-            theme(axis.title = element_blank(),
-                  legend.position = "bottom",
-                      legend.key.size = unit(8,"pt"),
-                  plot.title = element_blank(),
-                  axis.text.y = element_blank()
-                  ),
+          my_dotp_cl + 
+            scale_fill_viridis_c(limits = scalerange),
           lmp + 
-            theme(legend.position = "bottom",
-                  axis.text.y = element_blank()
-                  ) +
             labs(fill = ""), 
-          align = "h", ncol = 3, rel_widths = c(2,2.7,0.8)
+          align = "h", ncol = 3, rel_widths = c(3.5,2.7,1)
           )
 
+```
 
+```{r, fig.height = 2, fig.width = 4}
+
+showfactors_TCT(SplitObject(CD4Tcells, split.by = "ModelTreatment"),
+                relvln = c(4,1))
 
 ```
 
 
-```{r bytime, fig.height = 2.5, fig.width=3.5}
 
-vlns = makeViolins(Groups,paste0("nmf_",1:ntop), relvln = c(4,1))
+## Neutrophils
 
-bars = lapply(1:ntop,function(i){
-  barbreaks = seq(0,1,0.2)
-  if(max(nmf@reductions$NMF@feature.loadings[,i])<0.2){
-    barbreaks = seq(0,1,0.1)
+```{r neutroNMF}
+
+ntop = 20
+downsample_n = 1000
+
+if(!file.exists(paste0(owncache,"neutrophil_NMF.RData"))){
+
+  neutrophils@active.assay <- "RNA"
+  
+  neutrophils <- FindVariableFeatures(neutrophils)
+  neutrophils <- ScaleData(neutrophils, features = VariableFeatures(neutrophils))
+  
+  neutrophils <- RunNMF(object = neutrophils, assay = "RNA", nfactors = ntop,
+                  n.cores = 1)
+  
+  if(file.exists(owncache)){
+    save(neutrophils, file = paste0(owncache, "neutrophil_NMF.RData"))
   }
-  x = FactorGeneLoadingPlot(nmf, factor = i, topn = 10) +
-    scale_y_continuous(expand = expansion(mult = 0),
-                       breaks = barbreaks) + 
-    theme(axis.text.y = element_text(face = "italic",
-                                     size = 6, color = "black"),
-          axis.text.x = element_text(size = 6, color = "black"),
-          axis.title.y = element_blank(),
-          axis.title.x = element_text(size = 8,hjust = 0),
-          plot.margin = margin(t = 1, b = 1, l = 3, unit = "pt")) +
-    labs(y = "Weight")
-  x$layers[[1]]$aes_params$colour = NA
-  x 
-  })
-
-plots <- lapply(1:length(vlns), function(i){
-  print(plot_grid(
-    ggdraw() + 
-      draw_label(
-        "Factor score",
-        hjust = 0.5, 
-        size =  8, angle = 90
-      ),
-    plot_grid(ggdraw() + 
-  draw_label(
-    paste0(factorprefix, "f",i),
-    fontface = 'bold',
-    hjust = 0.5, 
-    size =  10
-  ),
-  plot_grid(vlns[[i]] + theme(plot.title = element_blank()),
-            bars[[i]], ncol = 2, rel_widths = c(4,1)), 
-  rel_heights = c(1,6), ncol = 1), nrow = 1, rel_widths = c(1,10)))
-})
-
-```
-
-
-# Distributions between clusters
-
-```{r byident, fig.height = 10}
-
-vpall <- VlnPlot(nmf, features = paste0("nmf_",1:ntop), 
-        pt.size = 0.1, combine = FALSE)
-
-plot_grid(plotlist = lapply(vpall, function(vp){
-  vp$layers[[2]]$aes_params$shape = 16
-  vp$layers[[1]]$aes_params$alpha = 0.4
-  vpts = vp$layers[[2]]
-  vp$layers[[2]] = vp$layers[[1]]
-  vp$layers[[1]] <- ggrastr::rasterise(vpts, dpi = 300)
-  vp +
-    NoLegend()}))
+}else{
+   load(paste0(owncache, "neutrophil_NMF.RData"))
+}
 
 
 ```
-
-# Enriched pathways
-
-## GO BP
 
 ```{r}
 
+for(i in 1:ntop){
+  neutrophils <- 
+    AddMetaData(neutrophils, 
+                neutrophils@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+                paste0("nmf_",i))
+}
 
-top.genes <- lapply(1:ntop, function(i) {
-  vals <- nmf@reductions$NMF@feature.loadings[, i]
-  gg <- data.frame(x = 1:length(vals), vals = sort(vals, decreasing = T))
-  gg$gene <- rownames(gg)
-  gg <- subset(gg, vals > 0)
-  gg$logvals <- log(gg$vals)
-  gg$smooth_logvals <- smth.gaussian(x = gg$logvals, windowLength = 10)
-  ggs <- gg[1:min(500, nrow(gg)), ]
-  knee <- uik(x = ggs$x, y = ggs$smooth_logvals)
-  ggs[1:knee, ]$gene
-})
-
-pathways <- lapply(seq_along(top.genes), function(i) {
-  gset <- top.genes[[i]]
-  df <- 
-    gost(query = gset, organism = "mmusculus", 
-         sources = "GO:BP", evcodes = TRUE)$result
-  if (is.null(df)) return(NULL)
-  df$factor <- paste0("factor_", i)
-  return(df)
-})
-pathways <- do.call(rbind, pathways)
-pathways$GeneRatio <- pathways$intersection_size/pathways$query_size
-
-pathways.summarized <- pathways %>% 
-  group_by(factor) %>%
-  top_n(n = 20, wt = -log10(p_value))
-
-pathways.summarized$term_name = shortenterms(pathways.summarized$term_name)
 
 ```
 
-`r datatable(pathways.summarized, class = 'cell-border stripe compact')`
 
 
-## KEGG
+
 
 ```{r}
 
+modelpvalues = getfactorpvalues_TCT(neutrophils, downsample = downsample_n, ntop)
 
-  pathwaysKEGG <- lapply(seq_along(top.genes), function(i) {
-    message(paste("KEGG analysis", i))
-    gset <- top.genes[[i]]
-    df <- gost(query = gset, organism = "mmusculus", sources = "KEGG")$result
-    if (is.null(df)) return(NULL)
-    df$factor <- paste0("factor_", i)
-    return(df)
-  })
-  pathwaysKEGG <- do.call(rbind, pathwaysKEGG)
+pvaluegg = melt(modelpvalues, variable.name = "factor",
+                value.name =  "p.value")
+pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
 
 
-pathwaysKEGG$GeneRatio <- pathwaysKEGG$intersection_size/pathwaysKEGG$query_size
-pathwaysKEGG.summarized <- pathwaysKEGG %>% 
-  group_by(factor) %>%
-  top_n(n = 20, wt = -log10(p_value))
+neutrophils_values = neutrophils@meta.data[,grep("^nmf_", colnames(neutrophils@meta.data))]
 
-pathwaysKEGG.summarized$term_name = shortenterms(pathwaysKEGG.summarized$term_name)
+neutrophils_scaled = apply(neutrophils_values, 2, scale)
+
+neutrophils_scaled_means_id = 
+  aggregate(neutrophils_scaled, 
+            by = list(neutrophils$ModelTreatmentTime), mean)
+neutrophils_means_id = 
+  aggregate(neutrophils_values, 
+            by = list(neutrophils$ModelTreatmentTime), mean)
+neutrophils_means_scaled_id = as.data.frame(apply(neutrophils_means_id[,-1], 2, scale))
+neutrophils_means_scaled_id$Group.1 = neutrophils_means_id$Group.1
+
+neutrophils_scaled_means_cluster = aggregate(neutrophils_scaled, by = list(neutrophils$NamedCluster), mean)
+neutrophils_means_cluster = aggregate(neutrophils_values, by = list(neutrophils$NamedCluster), mean)
+if(nrow(neutrophils_means_cluster)==1){
+  neutrophils_means_scaled_cluster = as.data.frame(rbind(apply(neutrophils_means_cluster[,-1], 2, scale)))
+  neutrophils_means_scaled_cluster$Group.1 = neutrophils_means_cluster$Group.1
+  neutrophils_means_scaled_cluster[1,is.nan(as.numeric(neutrophils_means_scaled_cluster[1,]))] = 0
+}else{
+  neutrophils_means_scaled_cluster = as.data.frame(apply(neutrophils_means_cluster[,-1], 2, scale))
+  neutrophils_means_scaled_cluster$Group.1 = neutrophils_means_cluster$Group.1
+}
 
 ```
 
-`r datatable(pathwaysKEGG.summarized, class = 'cell-border stripe compact')`
+
+```{r, fig.show="hide"}
+
+ph_sample = pheatmap(neutrophils_means_scaled_id[,paste0("nmf_", 1:ntop)])
+
+ph_order = ph_sample$tree_col$order
+
+```
+
+```{r, fig.width = 1.5, fig.height = 6}
+
+my_dotp = ggplot(melt(neutrophils_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + 
+  geom_vline(color = "white", xintercept = c(7.5,8.5)) +
+  scale_fill_viridis_c() + 
+  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt,
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_size_continuous(limits = c(0,100), range= c(0,3))
+
+my_dotp_cl = ggplot(melt(neutrophils_means_scaled_cluster), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + scale_fill_viridis_c() +
+  theme_classic() +
+  theme(axis.text = txt,
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.title = element_blank(),
+        legend.text = txt,
+        axis.text.y = element_blank(),
+        legend.key.size = unit(8,"pt"),
+        plot.title = element_blank(),
+        legend.position = "bottom",
+        legend.title = txt) + 
+  scale_size_continuous(limits = c(0,100))
+
+lmp = ggplot(pvaluegg,
+       aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
+  geom_tile(aes(fill = -log10(p.value))) + 
+  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
+  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        legend.title = element_text(size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
+
+scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
+               max(my_dotp$data$value, my_dotp_cl$data$value))
+
+plot_grid(my_dotp + 
+            scale_fill_viridis_c(limits = scalerange) + 
+            theme(axis.title = element_blank(),
+                  legend.position = "bottom",
+                      legend.key.size = unit(8,"pt")),
+          lmp + 
+            labs(fill = ""), 
+          align = "h", ncol = 2, rel_widths = c(3.5,1)
+          )
+
+```
+
+```{r, fig.height = 2, fig.width = 4}
+
+showfactors_TCT(SplitObject(neutrophils, split.by = "ModelTreatment"),
+                relvln = c(4,1))
+
+```
+
+
 
 
 # Session info
