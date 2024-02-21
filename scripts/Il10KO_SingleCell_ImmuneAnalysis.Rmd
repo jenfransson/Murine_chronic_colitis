@@ -971,7 +971,7 @@ showfactors_Il10(Bcells)
 ```{r}
 
 ntop = 20
-downsample_n = 100
+downsample_n = 1000
 txt = element_text(size = 8)
 
 ```
