@@ -65,32 +65,55 @@ showfactors_TCT = function(Groups, relvln = c(2.2,1)){
                            pt.size = 0.1,
                            combine = FALSE)
     y = lapply(y, function(x){
-    x$layers[[2]]$aes_params$alpha =0.2
-    x$layers[[2]]$aes_params$colour = "#888888"
-    x$layers[[2]]$aes_params$shape = 16
-    
-    violin = x$layers[[1]]
-    points = x$layers[[2]]
-    violin$aes_params$alpha = 0.3
-    violin$aes_params$size = 0.3
-    x$layers[[1]] = rasterise(points, dpi = 300)
-    x$layers[[2]] = violin
-    x + NoLegend() + scale_y_continuous(breaks = 1:10) + 
-      theme(axis.title.y = element_blank(),
-            axis.title.x = element_text(
-              size = 8,
-              margin = margin(t = 1, r = 1, b = 1, l = 1,
-                              unit = "pt"),
-              hjust = 0),
-            plot.title = element_text(
-              size = 8, hjust = 0,
-              margin = margin(t = 3, r = 1, b = 1, l = 1, unit = "pt"),
-              face = "bold"
-            ),
-            axis.text = element_text(size = 8),
-            axis.text.x = element_text(angle = 0, 
-                                       hjust = 0.5)) +
-      scale_fill_manual(values = viridis_colors)
+      x$layers[[2]]$aes_params$alpha =0.2
+      x$layers[[2]]$aes_params$colour = "#888888"
+      x$layers[[2]]$aes_params$shape = 16
+      
+      violin = x$layers[[1]]
+      points = x$layers[[2]]
+      violin$aes_params$alpha = 0.3
+      violin$aes_params$size = 0.3
+      x$layers[[1]] = rasterise(points, dpi = 300)
+      x$layers[[2]] = violin
+      
+      if(max(x$data[,1])<1){
+        ybreaks = c(0,0.4,0.8)
+      }else{
+        if(max(x$data[,1])<3.5){
+          ybreaks = c(0:3)
+        }else{
+          if(max(x$data[,1])<7){
+            ybreaks = seq(0,6,2)
+          }else{
+            if(max(x$data[,1])<10){
+              ybreaks = seq(0,9,3)
+            }else{
+              if(max(x$data[,1])<16){
+                ybreaks = seq(0,15,5)
+              }else{
+                ybreaks = seq(0,100,10)
+              }
+            }
+          }
+        }
+      }
+      
+      x + NoLegend() + scale_y_continuous(breaks = ybreaks) + 
+        theme(axis.title.y = element_blank(),
+              axis.title.x = element_text(
+                size = 8,
+                margin = margin(t = 1, r = 1, b = 1, l = 1,
+                                unit = "pt"),
+                hjust = 0),
+              plot.title = element_text(
+                size = 8, hjust = 0,
+                margin = margin(t = 3, r = 1, b = 1, l = 1, unit = "pt"),
+                face = "bold"
+              ),
+              axis.text = element_text(size = 8),
+              axis.text.x = element_text(angle = 0, 
+                                         hjust = 0.5)) +
+        scale_fill_manual(values = viridis_colors)
     })
     
     vlnlist[[i]] = y

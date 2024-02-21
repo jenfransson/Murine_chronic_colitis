@@ -1,7 +1,7 @@
 ---
 title: "T cell transfer single cell analysis - Epithelial fraction"
 editor_options:
-  chunk_output_type: console
+  chunk_output_type: inline
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   bookdown::html_document2:
@@ -43,6 +43,8 @@ if(!require("NNLM")){
 source("../code/SingleCell/color_list.R")
 source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
 
+txt = element_text(size = 8)
+
 
 ```
 
@@ -76,6 +78,7 @@ if(file.exists(owncache)){
 
 # Initial data 
 
+This report describes the analysis performed on scRNA-seq data from epithelial cells isolated from T cell transfer colitis mouse colons. The data has first been processed together with immune and stroma cells, see "TcellTransfer_SingleCell_DataPreparation.html". The data object produced from that analysis is saved as the object data/SingleCell/TcellTransfer/R_objects/epithelial_data.rds.
 
 ```{r loaddata}
 
@@ -84,8 +87,6 @@ alldata = readRDS(paste0(datadir,"epithelial_data.rds"))
 alldata = SetIdent(alldata, value = "orig.ident")
 
 alldata <- AddMetaData(alldata, log10(alldata$nFeature_RNA), "logFeatures")
-
-
 
 ```
 
@@ -105,15 +106,14 @@ When including the cells with lower numbers of genes in the analysis (not shown)
 
 ```{r}
 
-limits = data.frame(orig.ident = c('G_D0_E_ut', 'G_D10_E_ut', 'G_D20_E_ut', 'G_D30_E_il', 'G_D40_E_il',
-                               'G_D40_E_ut', 'G_D50_E_ut', 'G_D60_E_il', 'G_D60_E_ut', 'G_W0_Epi', 
-                               'G_W1_Epi', 'G_W2_Epi', 'G_W3_Epi', 'G_W3_Epi_aIL12', 'G_W4_Epi',
-                               'G_W5_Epi', 'G_W5_Epi_aIL12', 'G_W6_Epi', 'G_W7_Epi', 'G_W7_Epi_aIL12'),
-density = NA)
-
-
-
-
+limits =
+  data.frame(
+    orig.ident = c('G_D0_E_ut', 'G_D10_E_ut', 'G_D20_E_ut', 'G_D30_E_il',
+                   'G_D40_E_il','G_D40_E_ut', 'G_D50_E_ut', 'G_D60_E_il',
+                   'G_D60_E_ut', 'G_W0_Epi','G_W1_Epi', 'G_W2_Epi',
+                   'G_W3_Epi', 'G_W3_Epi_aIL12', 'G_W4_Epi','G_W5_Epi',
+                   'G_W5_Epi_aIL12', 'G_W6_Epi', 'G_W7_Epi', 'G_W7_Epi_aIL12'),
+    density = NA)
 
 for(x in sort(unique(alldata$orig.ident))){
   dens = density(alldata@meta.data[alldata@meta.data$orig.ident %in% x,]$logFeatures)
@@ -124,29 +124,25 @@ for(x in sort(unique(alldata$orig.ident))){
   minima_y = dens$y[which(diff(sign(diff(dens$y)))==2)+1]
   minima = minima[minima<max(maxima)]
   limits[match(x, limits$orig.ident),"density"] = max(minima)
-  
 }
 
   ggplot(alldata@meta.data, aes(x = logFeatures)) + geom_density() +
     geom_vline(data = limits, mapping = aes(xintercept = density)) + 
     facet_wrap(~orig.ident)
   
-  goodcells = Cells(alldata)[alldata$logFeatures > limits$density[match(alldata$orig.ident, limits$orig.ident)]]
+  goodcells =
+    Cells(alldata)[alldata$logFeatures > 
+                     limits$density[match(alldata$orig.ident, limits$orig.ident)]]
   
   alldata <-  subset(alldata, cells = goodcells)
   
-
 ```
-
-
 
 ```{r normalize}
 
 if(!file.exists(paste0(owncache,"first_dr.RData"))){
 
 DefaultAssay(alldata) = "RNA"
-
-
 
 suppressWarnings(
   suppressMessages(
@@ -173,7 +169,7 @@ suppressWarnings(
 ```
 
 
-# Plot QC vars
+# Quality control
 
 Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
 
@@ -184,7 +180,11 @@ VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol
 
 ```
 
-# Highly variable features
+# Dimensional reduction - pre-integration
+
+The data is first processed in the same way as the full dataset, with PCA on the 2000 most highly variable genes and subsequent UMAP for visualization. As can be seen below, some differences can be seen between the Rag2-/- and SCID backgrounds at this level of reduction.
+
+## Highly variable features
 
 ```{r topgenes, fig.height = 3, fig.width = 5}
 
@@ -200,9 +200,9 @@ lp
 
 ```
 
-# PCA
+## PCA
 
-```{r, fig.height = 5, fig.width = 6}
+```{r, fig.height = 3, fig.width = 6}
 
 plot_grid(plot_grid(ncol = 3, 
           DimPlot(alldata, reduction = "pca", group.by = "orig.ident", 
@@ -220,19 +220,21 @@ plot_grid(plot_grid(ncol = 3,
             NoLegend() + dimtheme + 
             theme(axis.text = element_text(size = 8),
                   axis.title = element_text(size = 8))),
-         get_legend(DimPlot(alldata, reduction = "pca", group.by = "orig.ident") + theme(legend.position = "top")),
-         ncol = 1)
+         get_legend(
+           DimPlot(alldata, reduction = "pca", group.by = "orig.ident") +
+             theme(legend.position = "top") + dimtheme),
+         ncol = 1, rel_heights = c(3,1))
 
 ```
-
 
 ```{r, fig.height = 3, fig.width = 6}
 
-VizDimLoadings(alldata, dims = 1:5, reduction = "pca", ncol = 5, balanced = T) &
-  theme(axis.text = element_text(size = 8), axis.title = element_text(size = 8))
+VizDimLoadings(alldata, dims = 1:4, reduction = "pca", 
+               ncol = 4, balanced = T, nfeatures = 20) &
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8))
 
 ```
-
 
 ```{r, fig.height = 2, fig.width = 4}
 
@@ -242,27 +244,30 @@ ElbowPlot(alldata, reduction = "pca", ndims = 50) +
 
 ```
 
-# UMAP
+## UMAP
 
-```{r firstumap, fig.height = 3, fig.width = 6}
-
-plot_grid(ncol = 2, DimPlot(alldata, reduction = "pca", raster = TRUE,
-                            group.by = "orig.ident", shuffle = TRUE) + 
-            NoLegend() + NoAxes() + dimtheme,
-      DimPlot(alldata, reduction = "umap", raster = TRUE,
-                  group.by = "Model", shuffle = TRUE) +
-            theme(legend.position = "bottom") + NoAxes() + dimtheme)
-
+```{r, fig.height = 2.5, fig.width=4}
 
 plot_grid(ncol = 1, DimPlot(alldata, reduction = "umap", raster = TRUE,
                             group.by = "orig.ident", shuffle = TRUE) +
+            theme(legend.position = "right") + NoAxes() + dimtheme)
+
+```
+
+```{r firstumap, fig.height = 2.5, fig.width = 5}
+
+plot_grid(ncol = 2, 
+      DimPlot(alldata, reduction = "umap", raster = TRUE,
+                  group.by = "Model", shuffle = TRUE) +
+            theme(legend.position = "bottom") + NoAxes() + dimtheme,
+      DimPlot(alldata, reduction = "umap", raster = TRUE,
+                  group.by = "Treatment", shuffle = TRUE) +
             theme(legend.position = "bottom") + NoAxes() + dimtheme)
 
-plot_grid(ncol = 2, DimPlot(alldata, reduction = "umap", raster = TRUE,
-                  group.by = "Treatment", shuffle = TRUE) +
-            theme(legend.position = "bottom") + NoAxes() + dimtheme,
+
+plot_grid(ncol = 2,
           DimPlot(alldata, reduction = "umap", raster = TRUE,
-                  group.by = "RPCA_cluster", label = TRUE, shuffle = TRUE) + 
+                  group.by = "RPCA_cluster", label = TRUE, shuffle = TRUE) +
             NoLegend() + NoAxes() + dimtheme)
 
 FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), raster = TRUE,
@@ -270,13 +275,11 @@ FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), raster =
 
 ```
 
-
 # Integration
 
+To enable equivalent clustering across samples, CCA integration is run with standard Seurat functions. 
 
 ```{r}
-
-
 
 if(!file.exists(paste0(owncache,"integration.RData"))){
   if(!file.exists(paste0(owncache,"anchors.RData"))){
@@ -286,7 +289,6 @@ if(!file.exists(paste0(owncache,"integration.RData"))){
     alldata <- SplitObject(alldata, split.by = "orig.ident")
     
     alldata = lapply(alldata, function(x){
-      message(length(Cells(x)))
         x <- NormalizeData(x, verbose = FALSE)
         x <- FindVariableFeatures(x, selection.method = "vst",
                 nfeatures = 2000, verbose = FALSE)
@@ -308,14 +310,9 @@ if(!file.exists(paste0(owncache,"integration.RData"))){
     gc()
     load(paste0(owncache,"anchors.RData"))
   }
- 
-
-  # fails on 128GB with 6 workers  directly after anchors 
-  # fails on 128GB with 2 workers on clean run 
-  # works on 128GB with sequential on clean run
+  
   plan("sequential")
 
-  
   # The order of integration (sample.tree) was not originally defined, 
   # but is specified here for reproducibility
   alldata <- IntegrateData(anchorset = data.anchors, dims = 1:30, new.assay.name = "CCA",
@@ -341,39 +338,53 @@ plan("sequential")
 
 ```
 
-```{r, fig.height = 3, fig.width=8}
+## Dimensional reduction
+
+```{r, fig.height = 2.5, fig.width=7}
 
 plot_grid(ncol = 3,
-  
-  DimPlot(alldata, reduction = "pca", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
-    NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
-  DimPlot(alldata, reduction = "umap", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
-    NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme,
-  get_legend(DimPlot(alldata, reduction = "pca", group.by = "orig.ident"))
+          DimPlot(alldata, reduction = "pca", group.by = "orig.ident", 
+                  pt.size = 0.01, shuffle = TRUE) +
+            NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
+          DimPlot(alldata, reduction = "umap", group.by = "orig.ident", 
+                  pt.size = 0.01, shuffle = TRUE) +
+            NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme,
+          get_legend(DimPlot(alldata, reduction = "pca", group.by = "orig.ident") +
+                       theme(legend.text = element_text(size = 8)) + dimtheme)
+)
+plot_grid(ncol = 3,
+          DimPlot(alldata, reduction = "umap", group.by = "Model", 
+                  pt.size = 0.01, shuffle = TRUE) +
+            NoAxes() + dimtheme + theme(legend.position = "bottom"),
+          DimPlot(alldata, reduction = "umap", group.by = "Treatment", 
+                  pt.size = 0.01, shuffle = TRUE) +
+            NoAxes() + dimtheme + theme(legend.position = "bottom"),
+          DimPlot(alldata, reduction = "umap", group.by = "RPCA_cluster", 
+                  pt.size = 0.01, shuffle = TRUE, label = TRUE) +
+            NoAxes() + NoLegend() + dimtheme
 )
 
 alldata@active.assay = "RNA"
-FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), 
-    order = T, slot = "data", combine = T) & dimtheme & NoAxes()
+plot_grid(FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), 
+    order = T, slot = "data", combine = T) & dimtheme & NoAxes(), 
+    NULL, rel_widths = c(4,1))
 alldata@active.assay = "CCA"
 
 ```
 
-
-
-```{r, fig.height = 6, fig.width=4}
+```{r, fig.height = 5, fig.width=7}
 
 FeaturePlot(alldata, reduction = "umap", 
             features = c("percent_mito","percent_ribo","S.Score",
                          "G2M.Score", "nFeature_RNA"), 
-    order = T, slot = "data", combine = T, ncol = 2) &
+    order = T, slot = "data", combine = T, ncol = 3) &
   NoAxes() & NoLegend() & dimtheme
 
 ```
 
-
-
 # Clustering
+
+The dataset is clustered using SNN and the Louvain algorithm at 4 resolutions. Resolution 0.5 is chosen for further analysis.
 
 ```{r}
 
@@ -397,13 +408,9 @@ if(!file.exists(paste0(owncache, "clustered.RData"))){
   load(paste0(owncache, "clustered.RData"))
 }
 
-
-
 ```
 
-
-
-```{r dimplots, fig.height=6, fig.width = 6}
+```{r dimplots, fig.height=5, fig.width = 5}
 
 plot_grid(ncol = 2, 
           DimPlot(alldata, reduction = "umap", group.by = "CCA_snn_res.0.25",
@@ -423,12 +430,37 @@ plot_grid(ncol = 2,
 ```
 
 
-```{r clustreeplot}
+```{r clustreeplot, fig.height = 3, fig.width = 6}
 
-clustree(alldata@meta.data, prefix = "CCA_snn_res.")
+ct = clustree(alldata@meta.data, prefix = "CCA_snn_res.")
+
+ct$layers[[1]]$aes_params$edge_width = 1
+
+plot_grid(ggplot(unique(ct$data[,c("y","CCA_snn_res.")]),
+       aes(y = y)) +
+  geom_text(x = 1, aes(label = CCA_snn_res.), size = 3) + 
+  scale_x_continuous(limits = c(0,2), position = "top") + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        axis.text = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 8),
+        axis.ticks = element_blank()) + 
+    labs(x= "Resolution"),
+  ct + 
+  scale_size_continuous(range = c(1,5)) + 
+  scale_colour_discrete(guide = "none") + 
+  theme(legend.key.size = unit(8,"pt"),
+        legend.title = element_text(size = 8),
+        legend.margin = margin(1,1,1,1,unit = "pt")),
+  align = "h", rel_widths = c(1,8))
 
 ```
 
+
+# Differential expression and annotation
+
+The different clusters are annotated using differential expression and known marker genes. For legibility, the annotations are here given prior to differential expression and gene marker information.
 
 ```{r}
 
@@ -457,9 +489,7 @@ names(color_list) = clusterorder
 
 ```
 
-# Differential expression
-
-```{r, fig.height = 4, fig.width = 4}
+```{r, fig.height = 3, fig.width = 3}
 
 dp = DimPlot(alldata, label = TRUE, shuffle = TRUE) + 
   NoAxes() + NoLegend() + dimtheme + scale_color_manual(values = color_list)
@@ -470,13 +500,13 @@ dp
 
 ```
 
+## Differential expression
 
+The top 15 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
 
-```{r, fig.width = 4}
+```{r, fig.width = 2, fig.height = 3}
 
 alldata@active.assay = "RNA"
-alldata = NormalizeData(alldata)
-alldata = FindVariableFeatures(alldata)
 
 plan("sequential")
 
@@ -492,11 +522,13 @@ if(!file.exists(paste0(owncache, "clustermarkers.rds"))){
    markers_genes = readRDS(paste0(owncache, "clustermarkers.rds"))
 }
 
-top25 <- markers_genes %>% group_by(cluster) %>% top_n(-25, p_val)
+top15 <- markers_genes %>% group_by(cluster) %>% top_n(-15, p_val)
 
-out = lapply(unique(top25$cluster), function(i){
-  markersdata = top25[top25$cluster==i,]
-  markersdata$gene = factor(markersdata$gene, levels = rev(markersdata$gene))
+out = lapply(unique(top15$cluster), function(i){
+  markersdata = top15[top15$cluster==i,]
+  markersdata$gene = 
+    factor(markersdata$gene, 
+           levels = markersdata$gene[order(markersdata$avg_log2FC)])
   print(ggplot(markersdata, aes(x = avg_log2FC, y = gene)) + 
           labs(title = i) + 
     geom_bar(stat = "identity") + 
@@ -508,7 +540,6 @@ out = lapply(unique(top25$cluster), function(i){
 
 ```
 
-
 ```{r}
 
 markergenes = 
@@ -517,11 +548,9 @@ markergenes =
     "Lgals3","Car1","Ccl20","Ubd","Clu","Tnf","Muc2","Ang4","Agr2",
     "Ccl6","Mptx1","Reg4","Chga","Chgb","Pyy","Cck","Dclk1")
 
-
-
 ```
 
-```{r dotplot, fig.height = 8, fig.width = 4}
+```{r dotplot, fig.height = 6, fig.width = 3}
 
 alldata@active.ident = factor(alldata$NamedCluster,
                               levels = clusterorder)
@@ -531,13 +560,13 @@ dot = dot + aes(x = id, y = features.plot) +
   labs(y = "Genes",x = "Clusters") + 
   scale_size(range = c(0.5,2.5), breaks = c(0,50,100), limits = c(0,100)) +
   theme(legend.position = "right", legend.title = element_blank(),
-        axis.text.x.top = element_text(size = 8, angle = 90, vjust =0.5,
-                                   hjust = 0),
-        axis.text.y = element_text(size = 8, face = "italic"),
+        axis.text.x = element_text(size = 6, angle = 90, hjust = 0),
+        axis.text.y = element_text(size = 6, face = "italic"),
         legend.key.width = unit(0.3, "cm"), 
         legend.key.height = unit(0.3,"cm"), 
-        legend.text = element_text(size = 8),
-        axis.title = element_text(size = 8))
+        legend.text = element_text(size = 6),
+        axis.title = element_text(size = 8)) 
+
 dot$scales$scales[[1]]$limits = c(-1.8,2.7)
 
 print(dot)
@@ -546,13 +575,15 @@ print(dot)
 
 # Population changes over time
 
+The proportion of each cluster among the total stromal population is shown across time points below. The order of clusters is based on the average correlation between proportion and time point for each background (untreated samples only), with positive correlation at the top and negative correlation on the bottom.
+
 ```{r}
 
 clean_sample_names = function(sam){
-  for(s in c("_Imm","I_","_Epi","_E","_Str","S_","_ut","G_", "_aIL12","_il")){
+  for(s in c("_Imm","I_","_Epi","_E","_Str","S_","_ut","G_")){
     sam = gsub(s, "",sam)
   }
-  sam
+  gsub("il","aIL12",gsub("_","\n",sam))
 }
 
 ```
@@ -628,7 +659,6 @@ cumulFreq$oldtime = cumulFreq$time
 cumulFreq$time = as.numeric(
   gsub("D","",gsub("W","",as.character(cumulFreq$time))))
 
-
 datasets = lapply(names(clustercors), function(bg){
   bgfreq = frequencies[frequencies$model == bg,]
   bglist = lapply(unique(bgfreq$treatment), function(i){
@@ -665,12 +695,22 @@ for(ds in datasets){
                     y = Proportion, x = samplenumber + xadj*0.3))}
 }
 
-barplot + geom_bar(stat = "identity", width = 0.6, color = "black")
+```
+
+```{r, fig.height = 3, fig.width = 7}
+
+barplot + geom_bar(stat = "identity", width = 0.6, color = "black") + 
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 8),
+        legend.key.size = unit(11,"pt")) 
 
 ```
 
 # Subset analyses
 
+To evaluate the changes of gene expression specfically in colonocytes and progenitors as well as goblet cells, these clusters are isolated. The UMAP shows the included cells for each analysis.
 
 ```{r}
 
@@ -719,6 +759,9 @@ plot_grid(plotlist = lapply(c("stemcolono","goblet"),
 
 ```{r}
 
+alldata@active.assay <- "RNA"
+alldata[["CCA"]] = NULL
+
 stemcolono = 
   subset(alldata, 
          cells = WhichCells(alldata, expression = 
@@ -730,7 +773,6 @@ gc()
 
 ```
 
-
 ## NMF
 
 ### Progenitors and colonocytes
@@ -739,7 +781,6 @@ gc()
 
 ntop = 40
 downsample_n = 1000
-txt = element_text(size = 8)
 
 ```
 
@@ -747,13 +788,13 @@ txt = element_text(size = 8)
 
 if(!file.exists(paste0(owncache,"stemcolono_NMF.RData"))){
 
-stemcolono@active.assay <- "RNA"
-
-stemcolono <- FindVariableFeatures(stemcolono)
-stemcolono <- ScaleData(stemcolono, features = VariableFeatures(stemcolono))
-
-stemcolono <- RunNMF(object = stemcolono, assay = "RNA", nfactors = ntop,
-              n.cores = 1)
+  stemcolono@active.assay <- "RNA"
+  
+  stemcolono <- FindVariableFeatures(stemcolono)
+  stemcolono <- ScaleData(stemcolono, features = VariableFeatures(stemcolono))
+  
+  stemcolono <- RunNMF(object = stemcolono, assay = "RNA", nfactors = ntop,
+                n.cores = 1)
 
   if(file.exists(owncache)){
     save(stemcolono, file = paste0(owncache, "stemcolono_NMF.RData"))
@@ -767,10 +808,10 @@ stemcolono <- RunNMF(object = stemcolono, assay = "RNA", nfactors = ntop,
 ```{r}
 
 for(i in 1:ntop){
-  stemcolono <- AddMetaData(stemcolono, stemcolono@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+  stemcolono <- 
+    AddMetaData(stemcolono, stemcolono@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
                      paste0("nmf_",i))
 }
-
 
 ```
 
@@ -783,7 +824,6 @@ pvaluegg = melt(modelpvalues, variable.name = "factor",
                 value.name =  "p.value")
 pvaluegg$depvar = factor(pvaluegg$depvar, 
                          levels = unique(pvaluegg$depvar))
-
 
 stemcolono_values = 
   stemcolono@meta.data[,grep("^nmf_", 
@@ -831,14 +871,14 @@ ph_order = ph_sample$tree_col$order
 
 ```
 
-```{r, fig.width = 4.2, fig.height = 5.2}
+```{r, fig.width = 4.2, fig.height = 5.8}
 
 my_dotp = ggplot(melt(stemcolono_means_scaled_id), 
                  aes(x = Group.1, 
                      y = factor(variable, 
                                 levels = rev(paste0("nmf_",ph_order))))) +
   geom_tile(aes(fill = value)) + 
-  geom_vline(color = "white", xintercept = 1.5) +
+  geom_vline(color = "white", xintercept = c(8.5,9.5)) +
   scale_fill_viridis_c() + 
   scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
   theme_classic() + 
@@ -916,7 +956,6 @@ showfactors_TCT(SplitObject(stemcolono, split.by = "ModelTreatment"),
 
 ntop = 20
 downsample_n = 1000
-txt = element_text(size = 8)
 
 ```
 
@@ -945,10 +984,11 @@ goblet <- RunNMF(object = goblet, assay = "RNA", nfactors = ntop,
 ```{r}
 
 for(i in 1:ntop){
-  goblet <- AddMetaData(goblet, goblet@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
-                     paste0("nmf_",i))
+  goblet <- 
+    AddMetaData(goblet, 
+                goblet@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+                paste0("nmf_",i))
 }
-
 
 ```
 
@@ -961,7 +1001,6 @@ pvaluegg = melt(modelpvalues, variable.name = "factor",
                 value.name =  "p.value")
 pvaluegg$depvar = factor(pvaluegg$depvar, 
                          levels = unique(pvaluegg$depvar))
-
 
 goblet_values = 
   goblet@meta.data[,grep("^nmf_", 
@@ -1016,7 +1055,7 @@ my_dotp = ggplot(melt(goblet_means_scaled_id),
                      y = factor(variable, 
                                 levels = rev(paste0("nmf_",ph_order))))) +
   geom_tile(aes(fill = value)) + 
-  geom_vline(color = "white", xintercept = 1.5) +
+  geom_vline(color = "white", xintercept = c(8.5,9.5)) +
   scale_fill_viridis_c() + 
   scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
   theme_classic() + 
@@ -1072,7 +1111,7 @@ plot_grid(my_dotp +
             scale_fill_viridis_c(limits = scalerange),
           lmp + 
             labs(fill = ""), 
-          align = "h", ncol = 3, rel_widths = c(4.2,1.4,1)
+          align = "h", ncol = 3, rel_widths = c(4.6,1,1)
           )
 
 ```
