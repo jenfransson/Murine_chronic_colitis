@@ -793,6 +793,8 @@ if(!file.exists(paste0(owncache,"stemcolono_NMF.RData"))){
   stemcolono <- FindVariableFeatures(stemcolono)
   stemcolono <- ScaleData(stemcolono, features = VariableFeatures(stemcolono))
   
+  set.seed(1)
+  
   stemcolono <- RunNMF(object = stemcolono, assay = "RNA", nfactors = ntop,
                 n.cores = 1)
 
@@ -964,12 +966,13 @@ downsample_n = 1000
 
 if(!file.exists(paste0(owncache,"goblet_NMF.RData"))){
 
-goblet@active.assay <- "RNA"
+  goblet@active.assay <- "RNA"
 
-goblet <- FindVariableFeatures(goblet)
-goblet <- ScaleData(goblet, features = VariableFeatures(goblet))
+  goblet <- FindVariableFeatures(goblet)
+  goblet <- ScaleData(goblet, features = VariableFeatures(goblet))
 
-goblet <- RunNMF(object = goblet, assay = "RNA", nfactors = ntop,
+  set.seed(1)
+  goblet <- RunNMF(object = goblet, assay = "RNA", nfactors = ntop,
               n.cores = 1)
 
   if(file.exists(owncache)){

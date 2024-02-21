@@ -278,33 +278,6 @@ plan("sequential")
 
 ```
 
-```{r, fig.height = 2, fig.width=5}
-
-plot_grid(ncol = 2,
-  
-  DimPlot(alldata, reduction = "pca", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
-    NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
-  DimPlot(alldata, reduction = "umap", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
-    NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme
-)
-
-alldata@active.assay = "RNA"
-FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), 
-    order = T, slot = "data", combine = T) & dimtheme & NoAxes()
-alldata@active.assay = "CCA"
-
-```
-
-```{r, fig.height = 5, fig.width=7}
-
-FeaturePlot(alldata, reduction = "umap", 
-            features = c("percent_mito","percent_ribo","S.Score",
-                         "G2M.Score", "nFeature_RNA"), 
-    order = T, slot = "data", combine = T, ncol = 3) &
-  NoAxes() & NoLegend() & dimtheme
-
-```
-
 ## Dimensional reduction
 
 ```{r, fig.height = 2.5, fig.width=7}
@@ -551,6 +524,8 @@ print(dot)
 
 The proportion of each cluster among the total stromal population is shown across time points below. The order of clusters is based on the average correlation between proportion and time point for each background (untreated samples only), with positive correlation at the top and negative correlation on the bottom.
 
+Note that the "Immune" cluster has been excluded from this analysis.
+
 ```{r}
 
 clean_sample_names = function(sam){
@@ -569,6 +544,7 @@ alldata$Treatment = factor(alldata$Treatment,
 
 frequencies = as.data.frame(table(data.frame(cluster=alldata$NamedCluster,
                  sample = alldata$orig.ident, model = alldata$Model)))
+frequencies = frequencies[frequencies$cluster != "Immune",]
 frequencies$Proportion=NA
 for(i in 1:nrow(frequencies)){
   frequencies$Proportion[i] =

@@ -277,33 +277,6 @@ plan("sequential")
 
 ```
 
-```{r, fig.height = 2, fig.width=5}
-
-plot_grid(ncol = 2,
-  
-  DimPlot(alldata, reduction = "pca", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
-    NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
-  DimPlot(alldata, reduction = "umap", group.by = "orig.ident", pt.size = 0.01, shuffle = TRUE) +
-    NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme
-)
-
-alldata@active.assay = "RNA"
-FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), 
-    order = T, slot = "data", combine = T) & dimtheme & NoAxes()
-alldata@active.assay = "CCA"
-
-```
-
-```{r, fig.height = 5, fig.width=7}
-
-FeaturePlot(alldata, reduction = "umap", 
-            features = c("percent_mito","percent_ribo","S.Score",
-                         "G2M.Score", "nFeature_RNA"), 
-    order = T, slot = "data", combine = T, ncol = 3) &
-  NoAxes() & NoLegend() & dimtheme
-
-```
-
 ## Dimensional reduction
 
 ```{r, fig.height = 2.5, fig.width=7}
