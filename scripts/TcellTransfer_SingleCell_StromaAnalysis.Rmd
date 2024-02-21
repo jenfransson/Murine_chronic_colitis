@@ -762,6 +762,8 @@ if(!file.exists(paste0(owncache,"fibroblasts_NMF.RData"))){
   fibroblasts <- FindVariableFeatures(fibroblasts)
   fibroblasts <- ScaleData(fibroblasts, features = VariableFeatures(fibroblasts))
   
+  set.seed(1)
+   
   fibroblasts <- RunNMF(object = fibroblasts, assay = "RNA", nfactors = ntop,
                   n.cores = 1)
   

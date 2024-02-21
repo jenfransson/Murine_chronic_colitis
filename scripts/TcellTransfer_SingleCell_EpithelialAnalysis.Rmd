@@ -878,7 +878,7 @@ my_dotp = ggplot(melt(stemcolono_means_scaled_id),
                      y = factor(variable, 
                                 levels = rev(paste0("nmf_",ph_order))))) +
   geom_tile(aes(fill = value)) + 
-  geom_vline(color = "white", xintercept = c(8.5,9.5)) +
+  geom_vline(color = "white", xintercept = c(8.5,11.5,17.5)) +
   scale_fill_viridis_c() + 
   scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
   theme_classic() + 
@@ -934,7 +934,7 @@ plot_grid(my_dotp +
             scale_fill_viridis_c(limits = scalerange),
           lmp + 
             labs(fill = ""), 
-          align = "h", ncol = 3, rel_widths = c(4,1.8,0.75)
+          align = "h", ncol = 3, rel_widths = c(4,1.2,0.9)
           )
 
 ```
@@ -1055,7 +1055,7 @@ my_dotp = ggplot(melt(goblet_means_scaled_id),
                      y = factor(variable, 
                                 levels = rev(paste0("nmf_",ph_order))))) +
   geom_tile(aes(fill = value)) + 
-  geom_vline(color = "white", xintercept = c(8.5,9.5)) +
+  geom_vline(color = "white", xintercept = c(8.5,11.5,17.5)) +
   scale_fill_viridis_c() + 
   scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
   theme_classic() + 

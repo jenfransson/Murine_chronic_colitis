@@ -808,6 +808,8 @@ if(!file.exists(paste0(owncache,"CD4_NMF.RData"))){
   CD4Tcells <- FindVariableFeatures(CD4Tcells)
   CD4Tcells <- ScaleData(CD4Tcells, features = VariableFeatures(CD4Tcells))
   
+  set.seed(1)
+  
   CD4Tcells <- RunNMF(object = CD4Tcells, assay = "RNA", nfactors = ntop,
                   n.cores = 1)
   
@@ -976,6 +978,8 @@ if(!file.exists(paste0(owncache,"neutrophil_NMF.RData"))){
   neutrophils <- FindVariableFeatures(neutrophils)
   neutrophils <- ScaleData(neutrophils, features = VariableFeatures(neutrophils))
   
+  set.seed(1)
+    
   neutrophils <- RunNMF(object = neutrophils, assay = "RNA", nfactors = ntop,
                   n.cores = 1)
   
