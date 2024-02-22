@@ -525,7 +525,7 @@ nmf_means_scaled_clus$Group.1 = nmf_means_clus$Group.1
 
 ```
 
-```{r, results = "hide"}
+```{r, fig.show = "hide"}
 
 ph = pheatmap::pheatmap(t(nmf_means_scaled_id[,1:20]))
 
@@ -609,22 +609,6 @@ ggplot(melt(nmf_means_scaled_id_clus, by = c("Group.1","Group.2")),
 ```
 
 
-
-
-```{r, fig.height = 2, fig.width=6}
-
-for(i in 1:nf){
-  plots = fixShapes(DimOverlay(rag2samples, reduction = "NMF",
-                       dims = i, sampleids = 1:4, pt.size = 0.75,
-                       cols = rev(viridis::magma(9)),
-                       ncol = 4, value.scale = "all",
-                       center.zero = FALSE, show.sb = FALSE), nplots = 4)
-  
-  print(plots & NoLegend())
-}
-
-
-```
 
 ```{r}
 
