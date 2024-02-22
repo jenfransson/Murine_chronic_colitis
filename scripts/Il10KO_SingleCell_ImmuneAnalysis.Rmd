@@ -400,9 +400,7 @@ dp
 
 ```
 
-## Differential expression
 
-The top 15 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
 
 ```{r, fig.width = 6, fig.height = 8}
 
@@ -412,6 +410,9 @@ VlnPlot(alldata, features = c("nFeature_RNA", "nCount_RNA", "percent_mito", "per
 
 ```
 
+## Differential expression
+
+The top 15 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
 
 ```{r,  fig.height = 3, fig.width=2}
 
@@ -488,9 +489,7 @@ plot_grid(dot,get_legend(dot + theme(legend.position = "right")),
 
 ```
 
-## Differential expression
-
-The top 15 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
+# CITE-seq
 
 ```{r, fig.height = 3, fig.width = 4}
 
@@ -695,9 +694,9 @@ gc()
 
 ```
 
-# NMF
+## NMF
 
-## T cells
+### T cells
 
 
 ```{r}
@@ -854,7 +853,7 @@ showfactors_Il10(Tcells)
 ```
 
 
-## B cells
+### B cells
 
 ```{r}
 
@@ -1012,7 +1011,7 @@ showfactors_Il10(Bcells)
 ```
 
 
-## Neutrophils
+### Neutrophils
 
 
 

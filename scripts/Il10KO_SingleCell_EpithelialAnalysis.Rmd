@@ -72,6 +72,8 @@ if(file.exists(owncache)){
 
 # Initial data 
 
+This report describes the analysis performed on scRNA-seq data from epithelial cells isolated from Il10-/- colitis mouse colons. The data has first been processed together with immune and stroma cells, see "Il10KO_SingleCell_DataPreparation.html". The data object produced from that analysis is saved as the object data/SingleCell/Il10KO/R_objects/epithelial_data.rds.
+
 Due to a large heterogeneity of cell quality in multiple samples, a filtering step is added to only include cells with > 1500 unique genes.
 
 ```{r}
@@ -101,7 +103,7 @@ if(!file.exists(paste0(owncache,"first_dr.RData"))){
 
 ```
 
-# Plot QC vars
+# Quality control
 
 Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
 
@@ -112,7 +114,11 @@ VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol
 
 ```
 
-# Find variable genes
+# Dimensional reduction - pre-integration
+
+The data is first processed in the same way as the full dataset, with PCA on the 2000 most highly variable genes and subsequent UMAP for visualization. As can be seen below, some differences can be seen between the Rag2-/- and SCID backgrounds at this level of reduction.
+
+## Highly variable features
 
 ```{r topgenes, fig.height = 3, fig.width = 5}
 
@@ -128,7 +134,7 @@ lp
 
 ```
 
-# PCA
+## PCA
 
 ```{r, fig.height = 3, fig.width = 6}
 
@@ -167,7 +173,7 @@ ElbowPlot(alldata, reduction = "pca", ndims = 50) +
 
 ```
 
-# UMAP
+## UMAP
 
 ```{r firstumap, fig.height = 3, fig.width = 6}
 
@@ -195,6 +201,8 @@ FeaturePlot(alldata, reduction = "umap", features = c("Ptprc","Epcam"), raster =
 ```
 
 # Integration
+
+To enable equivalent clustering across samples, CCA integration is run with standard Seurat functions. 
 
 ```{r}
 
@@ -244,6 +252,8 @@ if(!file.exists(paste0(owncache,"integration.RData"))){
 
 ```
 
+## Dimensional reduction
+
 ```{r, fig.height = 2, fig.width=5}
 
 plot_grid(ncol = 2,
@@ -271,6 +281,10 @@ FeaturePlot(alldata, reduction = "umap",
   NoAxes() & NoLegend() & dimtheme
 
 ```
+
+# Clustering
+
+The dataset is clustered using SNN and the Louvain algorithm at 4 resolutions. Resolution 1.0 is chosen for further analysis.
 
 ```{r}
 
@@ -316,12 +330,36 @@ plot_grid(ncol = 2,
 
 ```
 
-```{r clustreeplot}
+```{r clustreeplot, fig.height = 3, fig.width = 6}
 
-clustree(alldata@meta.data, prefix = "CCA_snn_res.")
+ct = clustree(alldata@meta.data, prefix = "CCA_snn_res.")
 
+ct$layers[[1]]$aes_params$edge_width = 1
+
+plot_grid(ggplot(unique(ct$data[,c("y","CCA_snn_res.")]),
+       aes(y = y)) +
+  geom_text(x = 1, aes(label = CCA_snn_res.), size = 3) + 
+  scale_x_continuous(limits = c(0,2), position = "top") + 
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        axis.text = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 8),
+        axis.ticks = element_blank()) + 
+    labs(x= "Resolution"),
+  ct + 
+  scale_size_continuous(range = c(1,5)) + 
+  scale_colour_discrete(guide = "none") + 
+  theme(legend.key.size = unit(8,"pt"),
+        legend.title = element_text(size = 8),
+        legend.margin = margin(1,1,1,1,unit = "pt")),
+  align = "h", rel_widths = c(1,8))
 
 ```
+
+# Differential expression and annotation
+
+The different clusters are annotated using differential expression and known marker genes. For legibility, the annotations are here given prior to differential expression and gene marker information.
 
 ```{r}
 
@@ -368,6 +406,10 @@ VlnPlot(alldata, features = c("nFeature_RNA", "nCount_RNA", "percent_mito", "per
 
 ```
 
+
+## Differential expression
+
+The top 15 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
 
 ```{r,  fig.height = 3, fig.width=2}
 
@@ -437,6 +479,10 @@ plot_grid(dot,get_legend(dot + theme(legend.position = "right")),
 ```
 
 
+# Population changes over time
+
+The proportion of each cluster among the total stromal population is shown across time points below. The order of clusters is based on the average correlation between proportion and time point for each background (untreated samples only), with positive correlation at the top and negative correlation on the bottom.
+
 ```{r}
 
 
@@ -480,8 +526,6 @@ cumulFreq$xadj = rep(c(-1,1), c(nrow(frequencies),nrow(frequencies)))
 
 
 ```
-
-# Ordered by increase over time
 
 
 ```{r, fig.height = 7}
@@ -564,6 +608,7 @@ barplot + geom_bar(stat = "identity", width = 0.6, color = "black") +
 
 # Subset analyses
 
+To evaluate the changes of gene expression specfically in CD4+ T cells, B and plasma cells, and neutrophils, these clusters are isolated. The UMAP shows the included cells for each analysis.
 
 ```{r}
 
@@ -606,8 +651,9 @@ gc()
 
 ```
 
+## NMF
 
-## Progenitors and colonocytes
+### Progenitors and colonocytes
 
 
 
@@ -766,7 +812,7 @@ showfactors_Il10(stemcolono)
 ```
 
 
-## Goblet cells
+### Goblet cells
 
 
 
@@ -849,7 +895,7 @@ ph_order = ph_sample$tree_col$order
 
 ```
 
-```{r, fig.width = 2.6, fig.height = 6}
+```{r, fig.width = 2.6, fig.height = 5.5}
 
 
 

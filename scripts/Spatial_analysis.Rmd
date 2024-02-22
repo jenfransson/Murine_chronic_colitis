@@ -1,7 +1,6 @@
 ---
 title: "Basic Analysis of IL10KO visium"
 output:
-  pdf_document: default
   html_document:
     toc: yes
   bookdown::html_document2:
@@ -9,6 +8,7 @@ output:
     toc: yes
     toc_float:
       collapsed: no
+  pdf_document: default
 ---
 
 ### The preparation of data before general analysis
@@ -127,7 +127,7 @@ allsamples <- allsamples[genes.keep, ]
 
 Filter: Counts > 20
 
-```{r, fig.height = 7}
+```{r, fig.height = 4, fig.width = 7}
 
 allsamples = SubsetSTData(allsamples, expression = nCount_RNA>20)
 

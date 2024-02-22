@@ -55,16 +55,17 @@ rsconnect/
 # Processed data files
 data/*rds
 data/Bulk/uc_conserved*.csv
-data/SingleCell/*/R_objects
+data/SingleCell/*/R_objects*
 
 
 # Raw data files
 data/SingleCell/Il10KO/expression_matrices*
 data/SingleCell/TcellTransfer/expression_matrices*
 data/Bulk/mouseKEGG.rds
-
+data/Spatial/cellranger_output
 
 
 # Tests
 scripts/tests
 scripts/*.pdf
+*donotpublish*
