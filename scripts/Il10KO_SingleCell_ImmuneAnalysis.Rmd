@@ -488,7 +488,9 @@ plot_grid(dot,get_legend(dot + theme(legend.position = "right")),
 
 ```
 
-## Dimensional reduction
+## Differential expression
+
+The top 15 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
 
 ```{r, fig.height = 3, fig.width = 4}
 
@@ -566,8 +568,6 @@ cumulFreq$xadj = rep(c(-1,1), c(nrow(frequencies),nrow(frequencies)))
 
 
 ```
-
-# Ordered by increase over time
 
 
 ```{r, fig.height = 7}
@@ -650,6 +650,7 @@ barplot + geom_bar(stat = "identity", width = 0.6, color = "black") +
 
 # Subset analyses
 
+To evaluate the changes of gene expression specfically in CD4+ T cells, B and plasma cells, and neutrophils, these clusters are isolated. The UMAP shows the included cells for each analysis.
 
 ```{r}
 
@@ -694,10 +695,9 @@ gc()
 
 ```
 
-
+# NMF
 
 ## T cells
-
 
 
 ```{r}

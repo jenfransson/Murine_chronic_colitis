@@ -465,7 +465,7 @@ if(!file.exists(paste0(owncache, "clustermarkers.rds"))){
    markers_genes = readRDS(paste0(owncache, "clustermarkers.rds"))
 }
 
-top25 <- markers_genes %>% group_by(cluster) %>% top_n(-25, p_val)
+top15 <- markers_genes %>% group_by(cluster) %>% top_n(-15, p_val)
 
 out = lapply(unique(top15$cluster), function(i){
   markersdata = top15[top15$cluster==i,]

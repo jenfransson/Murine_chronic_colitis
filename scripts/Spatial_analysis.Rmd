@@ -1,0 +1,713 @@
+---
+title: "Basic Analysis of IL10KO visium"
+output:
+  pdf_document: default
+  html_document:
+    toc: yes
+  bookdown::html_document2:
+    code_folding: hide
+    toc: yes
+    toc_float:
+      collapsed: no
+---
+
+### The preparation of data before general analysis
+
+```{r}
+
+knitr::opts_chunk$set(message    = FALSE,
+                      warning    = FALSE,
+                      cache.lazy=FALSE)
+
+```
+
+```{r message=FALSE}
+
+# Run with ORES_2 conda environment
+
+.libPaths("/Users/jenfra/miniconda3/envs/ORES_2/lib/R/library")
+
+library(Seurat)
+library(SeuratData)
+library(STutility)
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+library(zeallot)
+library(Matrix)
+library(RColorBrewer)
+library(patchwork)
+library(harmony)
+library(hdf5r)
+library(cowplot)
+library(reshape2)
+library(inflection)
+library(gprofiler2)
+
+source("../code/SingleCell/gaussian_smoothing.R")
+
+fixShapes = function(x, layer = 2, nplots = 8){
+  for(i in 1:nplots){
+    x[[i]]$layers[[layer]]$aes_params$stroke = NA
+  }
+  return(x)
+}
+
+
+```
+
+```{r, results = "hide", cache = TRUE}
+
+dirs = c(paste0("../data/Spatial/cellranger_output/Il10KO/", c("A","B","C","D"), "1_trim"),
+  paste0("../data/Spatial/cellranger_output/TcellTransfer_Rag2/",c("day0","day30","day50","day50_il")))
+
+samples = sapply(dirs, paste0, "/filtered_feature_bc_matrix.h5")
+json = sapply(dirs, paste0, "/spatial/scalefactors_json.json")
+spotfiles = sapply(dirs, list.files, pattern = "tissue_positions.*.csv", recursive = TRUE, full.names = TRUE)
+imgs = sapply(dirs, paste0, "/spatial/tissue_hires_image.png")
+
+
+info <- data.frame(samples, imgs, json, spotfiles,
+                   day = c("IL10_A", "IL10_B","IL10_C","IL10_D",
+                           "Rag2_d0","Rag2_d30","Rag2_d50","Rag2_d50_il"),
+                   stringsAsFactors = F)
+allsamples <- InputFromTable(infotable = info,
+                              minUMICountsPerSpot,
+                              platform =  "Visium")
+allsamples <- LoadImages(allsamples, time.resolve = FALSE, verbose = TRUE)
+
+allsamples = AddMetaData(allsamples, substr(allsamples$day, 1, 4), "Model")
+
+```
+
+Samples
+
+1. Position A1, WT
+2. Position B1, 10 week old IL10-/-
+3. Position C1, 14 week old IL10-/-
+4. Position D1, 14 week old IL10-/- with prolapse
+5. T cell Transfer (Rag2-/-) day 0 
+6. T cell Transfer (Rag2-/-) day 30 
+7. T cell Transfer (Rag2-/-) day 50 
+8. T cell Transfer (Rag2-/-) day 50 anti-IL12 
+
+```{r fig.height=6, fig.width=10}
+ImagePlot(allsamples, method = "raster", type = "raw", ncol = 4)
+```
+
+```{r fig.height=6, fig.width=6, cache = TRUE}
+### Filtering the datasets
+ensids <- read.table("../annotation/mm10_genes.tsv",
+                     header = TRUE, stringsAsFactors = FALSE)
+rownames(ensids) <- ensids$gene_name
+gene_attr <- data.frame(gene = rownames(allsamples),
+                        biotype = ensids[rownames(allsamples), ]$gene_biotype,
+                        count = Matrix::rowSums(allsamples@assays$RNA@counts))
+gene_attr.summarized <- gene_attr %>% group_by(biotype) %>%
+  summarize(count = sum(count)) %>%
+  ungroup() %>%
+  mutate(count = count/sum(count))
+ggplot(gene_attr.summarized, aes(x = "", y = count, fill = biotype)) +
+  geom_bar(width = 1, stat = "identity") +
+  coord_polar("y", start = 0)
+bio.keep <- c("protein_coding", "TR_V_gene", "TR_D_gene", "TR_J_gene", "TR_C_gene",
+              "IG_LV_gene", "IG_V_gene", "IG_J_gene", "IG_C_gene", "IG_D_gene")
+
+allsamples[["percent.mt"]] <- PercentageFeatureSet(allsamples, pattern = "^mt-")
+
+genes.keep <- intersect(rownames(allsamples), 
+                        subset(ensids, gene_biotype %in% bio.keep)$gene_name)
+genes.remove <- grep(pattern = "^mt-", x = rownames(allsamples), value = TRUE)
+genes.keep <- setdiff(genes.keep, genes.remove)
+allsamples <- allsamples[genes.keep, ]
+
+
+```
+
+
+Filter: Counts > 20
+
+```{r, fig.height = 7}
+
+allsamples = SubsetSTData(allsamples, expression = nCount_RNA>20)
+
+st_points = FeatureOverlay(allsamples, "labels", sampleids = 1:8, ncol = 4,
+                           pt.alpha = 0.5, cols = "red",
+                          show.sb = FALSE, pt.size = 0.9) &
+  theme(legend.position = "none")
+
+fixShapes(st_points)
+
+```
+
+```{r fig.height=8, fig.width=8}
+
+allsamples$sample_id <- paste0("sample_", GetStaffli(allsamples)@meta.data$sample)
+allsamples <- SetIdent(allsamples, value = "sample_id")
+
+a1 <- FeatureOverlay(allsamples, features = c("nCount_RNA", "nFeature_RNA"),
+                     sampleids = 1:8, palette = "viridis", pt.size = 0.9,
+                     ncol = 4,value.scale = "all",
+                     pt.alpha = 0.8, add.alpha = F, show.sb = FALSE)
+
+fixShapes(a1, nplots = 8)
+
+```
+
+
+
+```{r fig.height=3, fig.width=6}
+
+
+VlnPlot(allsamples, features = c("nFeature_RNA", "nCount_RNA"),
+              ncol = 2, pt.size = -1, group.by = "day")
+
+
+```
+
+
+
+
+### Integration
+
+```{r results = "hide", message=FALSE, cache = TRUE}
+
+## SCT, NMF
+  allsamples <- allsamples %>%
+    SCTransform(return.only.var.genes = FALSE,
+    variable.features.n = NULL,
+    variable.features.rv.th = 1.1, vars.to.regress = "nFeature_RNA") %>%
+    RunPCA() %>% 
+    RunHarmony(group.by.vars = "day") %>%
+    RunUMAP(reduction="harmony",
+                dims = 1:50, 
+                n.components = 3, 
+                n.neighbors = 20, 
+                spread = .3,
+                repulsion.strength = .2,
+                min.dist= .1, 
+                verbose = T,
+                num_threads=0,
+                n.epochs = 100,
+                metric = "cosine", 
+                seed.use = 42,
+                learning.rate = 1,
+                negative.sample.rate = 20)
+  
+  knn <- RcppHNSW::hnsw_knn( allsamples@reductions$harmony@cell.embeddings[,1:20] , 
+                           k = 200 , 
+                           distance = "cosine", n_threads = 7 )
+  i <- rep(1:nrow(knn$idx),ncol(knn$idx))
+  j <- c(knn$idx)
+  p <- c(knn$dist>0)*1
+  nn <- as(sparseMatrix(i = i, j=j,  x=p, dims = c(nrow(knn$idx),nrow(knn$idx)),
+         dimnames = list(colnames(allsamples),colnames(allsamples))), "dgCMatrix")
+  
+  g <- igraph::graph_from_adjacency_matrix(nn,mode = "undirected")
+  cl <- igraph::cluster_louvain(g)
+  allsamples$clusters_louvain <- cl$membership
+  
+  allsamples$clusters_louvain = 
+    factor(allsamples$clusters_louvain, 
+           levels = sort(unique(allsamples$clusters_louvain)))
+  allsamples = SetIdent(allsamples, value = "clusters_louvain")
+  
+  
+  
+  knn <- RcppHNSW::hnsw_knn( allsamples@reductions$harmony@cell.embeddings[,1:20] , 
+                           k = 10 , 
+                           distance = "cosine", n_threads = 7 )
+  i <- rep(1:nrow(knn$idx),ncol(knn$idx))
+  j <- c(knn$idx)
+  p <- c(knn$dist>0)*1
+  nn <- as(sparseMatrix(i = i, j=j,  x=p, dims = c(nrow(knn$idx),nrow(knn$idx)),
+         dimnames = list(colnames(allsamples),colnames(allsamples))), "dgCMatrix")
+  
+  g <- igraph::graph_from_adjacency_matrix(nn,mode = "undirected")
+  cl <- igraph::cluster_louvain(g)
+  allsamples$clusters_louvain_10 <- cl$membership
+  
+  allsamples$clusters_louvain_10 = 
+    factor(allsamples$clusters_louvain, 
+           levels = sort(unique(allsamples$clusters_louvain_10)))
+
+
+allsamples = RunUMAP(allsamples,
+        reduction="pca",
+                dims = 1:50, 
+                n.components = 2, 
+                n.neighbors = 20, 
+                spread = .3,
+                repulsion.strength = .2,
+                min.dist= .1, 
+                verbose = T,
+                num_threads=0,
+                n.epochs = 100,
+                metric = "cosine", 
+                seed.use = 42,
+                learning.rate = 1,
+                negative.sample.rate = 20,
+        reduction.key = "umap_pca_",
+        reduction.name = "umap_pca")
+
+source("../code/SingleCell/color_list.R")
+cluster_colors = get_color_list(length(unique(allsamples@active.ident)))
+allsamples$orderedcluster = 
+  factor(paste0("cluster",allsamples$clusters_louvain), 
+         levels = paste0("cluster", c(9,7,10,11,13,12,8,5,4,3,6,1,2,14)))
+names(cluster_colors) = paste0("cluster", 1:14)
+
+allsamples = SetIdent(allsamples, value = "orderedcluster")
+
+```
+
+
+```{r}
+
+plot_grid(DimPlot(allsamples, group.by = "day", shuffle = TRUE,
+                  reduction = "umap_pca") + NoAxes(),
+          DimPlot(allsamples, group.by = "day", shuffle = TRUE) + 
+            NoAxes())
+plot_grid(DimPlot(allsamples, group.by = "Model", shuffle = TRUE, 
+                  reduction = "umap_pca") +
+            NoAxes(),
+          DimPlot(allsamples, group.by = "Model", shuffle = TRUE) +
+            NoAxes())
+plot_grid(DimPlot(allsamples, shuffle = TRUE, reduction = "umap_pca") +
+            NoAxes() + scale_color_manual(values = cluster_colors),
+          DimPlot(allsamples, shuffle = TRUE) + NoAxes() + 
+            scale_color_manual(values = cluster_colors))
+
+```
+
+```{r}
+
+VlnPlot(allsamples, features = c("nCount_RNA", "nFeature_RNA"), 
+        pt.size = 0) & scale_fill_manual(values = cluster_colors)
+
+```
+
+
+
+```{r}
+
+
+ST.FeaturePlot(allsamples, value.scale = "all",
+               features = c("Epcam","Myh11","Col1a1"), blend = TRUE,
+               ncol = 4, pt.border = NA, show.sb = FALSE, pt.size = 1)
+
+
+```
+
+
+```{r, fig.height=3.5, fig.width=6}
+
+genes =  c("Epcam","Muc2","Agr2","Aqp4","Chga","Chgb",
+           "Myh11","Grem1","Pdgfra","Foxl1","Cd81","Bmp5","Wnt5a",
+           "Cd34","Pdpn","Ereg","Itgax","Cd14","S100a9","Nampt","Cd3e",
+           "Cd3g","Cd3d","Rorc","Ikzf3","Ms4a1","Ly6a","Lgr5")
+
+for(g in genes){
+  print(ST.FeaturePlot(allsamples, features = g, value.scale = "all", 
+                     pt.size = 0.9, ncol = 4, pt.border = FALSE,
+                     pt.alpha = 0.8,  show.sb = FALSE, 
+                     palette = "viridis", indices = 1:8) & 
+                    theme(legend.key.size = unit(8,"pt"),
+                          legend.text = element_text(size = 8),
+                          legend.title = element_text(size = 8),
+                          plot.title = element_text(size = 8),
+                          plot.subtitle = element_text(size = 8)))
+  
+}
+
+```
+
+
+
+```{r, fig.height = 3, fig.width = 5}
+
+allsamples$clusters_louvain = factor(allsamples$clusters_louvain, levels = sort(unique(allsamples$clusters_louvain)))
+allsamples = SetIdent(allsamples, value = "orderedcluster")
+
+DimPlot(allsamples) + scale_color_manual(values = cluster_colors) +
+  NoAxes() + theme(legend.key.size = unit(10,"pt"))
+
+```
+
+```{r, fig.height = 4, fig.width = 7}
+
+cluster_plots = FeatureOverlay(allsamples, "orderedcluster", sampleids = 1:8,
+               show.sb = FALSE, ncols = 4, pt.border = FALSE, pt.size = 0.9, 
+               label.by = "day") & scale_fill_manual(values = cluster_colors)
+
+plot_grid(fixShapes(cluster_plots) & 
+  labs(fill = "Cluster") &
+  theme(legend.text = element_text(size = 8), 
+        legend.position = "none",
+        plot.title = element_blank(),
+        plot.subtitle = element_text(size = 8)),
+  plot_grid(get_legend(cluster_plots[[1]] +
+                         guides(fill = guide_legend(ncol = 10, 
+                                                   override.aes=list(shape = 21, size = 4))) & 
+                         labs(fill = "Cluster") &
+                         theme(legend.text = element_text(size = 8), 
+                               legend.title = element_text(size = 10)))), 
+  rel_heights = c(4,1), ncol = 1)
+
+
+```
+
+
+```{r, fig.width=6, fig.height=3}
+
+VlnPlot(allsamples, c("nCount_RNA","nFeature_RNA"),
+        pt.size = -1) & NoLegend() & scale_fill_manual(values = cluster_colors)
+
+VlnPlot(allsamples, c("nCount_RNA","nFeature_RNA"), split.by = "Model",
+        pt.size = -1) &  theme(legend.position = "bottom")
+
+
+```
+
+
+```{r}
+
+ggplot(allsamples@meta.data, aes(x = day)) + 
+  geom_bar(position = "fill", aes(fill = orderedcluster))  +
+  scale_fill_manual(values = cluster_colors)
+
+```
+
+
+
+
+```{r, fig.height=4, fig.width=2}
+
+markers_genes = FindAllMarkers(
+  subset(allsamples, cells = WhichCells(allsamples, expression = Model == "IL10")),
+  max.cells.per.ident = 100, 
+  random.seed = 42, only.pos = TRUE,
+  test.use = "wilcox")
+
+il10_top5 <- markers_genes[markers_genes$p_val_adj<0.05,] %>% 
+  group_by(cluster) %>% top_n(-5, p_val)
+il10_top5 <- il10_top5 %>% group_by(cluster) %>% top_n(5, avg_log2FC)
+
+```
+
+
+
+```{r, fig.height=4, fig.width=2}
+
+markers_genes = FindAllMarkers(
+  subset(allsamples, cells = WhichCells(allsamples, expression = Model == "Rag2")),
+  max.cells.per.ident = 100, 
+  random.seed = 42, only.pos = TRUE,
+  test.use = "wilcox")
+
+rag2_top5 <- markers_genes[markers_genes$p_val_adj<0.05,] %>% 
+  group_by(cluster) %>% top_n(-5, p_val)
+rag2_top5 <- rag2_top5 %>% group_by(cluster) %>% top_n(5, avg_log2FC)
+
+```
+
+
+```{r, fig.width=8, fig.height=8}
+
+allsamples = SetIdent(allsamples, value = "Model")
+
+plot_grid(DotPlot(allsamples, idents = "IL10", group.by = "orderedcluster",
+        features = unique(c(il10_top5$gene,
+  rag2_top5$gene)[order(c(il10_top5$cluster, rag2_top5$cluster))])) +
+  coord_flip() +scale_size_continuous(range = c(0,3)) +
+  labs(title = "Il10") +
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8)) +
+  scale_y_discrete(labels = function(x){gsub("cluster","",x)}),
+DotPlot(allsamples, idents = "Rag2", group.by = "orderedcluster",
+        features = unique(c(il10_top5$gene,
+  rag2_top5$gene)[order(c(il10_top5$cluster, rag2_top5$cluster))])) +
+  coord_flip() + scale_size_continuous(range = c(0,3)) +
+  labs(title = "Rag2") +
+  theme(axis.text = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8)) +
+  scale_y_discrete(labels = function(x){gsub("cluster","",x)}))
+
+```
+
+
+# NMF in T cell transfer samples
+
+
+```{r, cache = TRUE}
+
+rag2samples = SetIdent(allsamples, value = "Model")
+rag2samples = SubsetSTData(rag2samples, idents = "Rag2")
+
+
+samples = c("Rag2 d0", "Rag2 d30", "Rag2 d50", "Rag2 d50 + aIL12")
+names(samples) = paste0("sample_", 5:8)
+rag2samples = AddMetaData(rag2samples,
+                   factor(samples[rag2samples$sample_id], 
+                          levels = samples),
+                   "sample_name")
+
+rag2samples$clusters_louvain =  factor(rag2samples$clusters_louvain,
+                                levels = c(1,2,14,3:13))
+
+
+nf = 20
+
+rag2samples = RunNMF(rag2samples, nfactors = nf, 
+              reduction.name = paste0("NMF_",nf),
+              reduction.key = paste0("nmf",nf,"_"))
+
+```
+
+
+```{r}
+
+rag2samples@reductions$NMF = rag2samples@reductions[[paste0("NMF_",nf)]]
+
+colnames(rag2samples@reductions$NMF@feature.loadings) = 
+  gsub(paste0("nmf",nf), "factor", colnames(rag2samples@reductions$NMF@feature.loadings))
+
+```
+
+```{r, fig.height = 10, fig.width = 6}
+
+top.genes <- lapply(1:nf, function(i) {
+  vals <- rag2samples@reductions[["NMF"]]@feature.loadings[, i]
+  gg <- data.frame(x = 1:length(vals), vals = sort(vals, decreasing = T))
+  gg$gene <- rownames(gg)
+  gg <- subset(gg, vals > 0)
+  gg$logvals <- log(gg$vals)
+  gg$smooth_logvals <- smth.gaussian(x = gg$logvals, windowLength = 10)
+  ggs <- gg[1:500, ]
+  knee <- uik(x = ggs$x, y = ggs$smooth_logvals)
+  ggs[1:knee, ]$gene
+})
+
+
+heatmapvalues = as.data.frame(
+  rag2samples@reductions[["NMF"]]@feature.loadings[
+    unique(unlist(lapply(top.genes, "[", 1:5))),])
+
+heatmapvalues$gene = rownames(heatmapvalues)
+
+heatmapdf = melt(heatmapvalues)
+heatmapdf$gene = factor(heatmapdf$gene, levels = rev(rownames(heatmapvalues)))
+
+ggplot(heatmapdf, aes(x = variable, y = gene)) + geom_tile(aes(fill = value)) +
+  scale_fill_viridis_c(option = "magma") + 
+  theme(axis.text = element_text(size = 8),
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.text.y = element_text(face = "italic"))
+
+
+```
+
+```{r}
+
+nmf_values = rag2samples@reductions$NMF_20@cell.embeddings
+
+nmf_means_id = aggregate(nmf_values, by = list(rag2samples$sample_name), mean)
+nmf_means_scaled_id = as.data.frame(apply(nmf_means_id[,-1], 2, scale))
+nmf_means_scaled_id$Group.1 = nmf_means_id$Group.1
+
+nmf_means_clus = aggregate(nmf_values, by = list(rag2samples$orderedcluster), mean)
+nmf_means_scaled_clus = as.data.frame(apply(nmf_means_clus[,-1], 2, scale))
+nmf_means_scaled_clus$Group.1 = nmf_means_clus$Group.1
+
+```
+
+```{r, results = "hide"}
+
+ph = pheatmap::pheatmap(t(nmf_means_scaled_id[,1:20]))
+
+```
+
+```{r, fig.height = 5, fig.width=5}
+
+txt = element_text(size = 8)
+
+scalerange = c(min(min(nmf_means_scaled_clus[,1:nf]), min(nmf_means_scaled_id[,1:nf])),
+               max(max(nmf_means_scaled_clus[,1:nf]), max(nmf_means_scaled_id[,1:nf])))
+
+plot_grid(ggplot(melt(nmf_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf20_",ph$tree_row$order))))) +
+  geom_tile(aes(fill = value)) + scale_fill_viridis_c(limits = scalerange) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        legend.position = "none") +  
+  scale_size_continuous(limits = c(0,100), range= c(0,3)) +
+    labs(title = "Ordered by sample similarity") + 
+  geom_vline(xintercept = 4.5, color = "white") + 
+  theme(plot.title = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)),
+  ggplot(melt(nmf_means_scaled_clus), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf20_",ph$tree_row$order))))) +
+  geom_tile(aes(fill = value)) + scale_fill_viridis_c(limits = scalerange) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt) +  
+  scale_size_continuous(limits = c(0,100), range= c(0,3)) +
+    labs(title = "Ordered by sample similarity") + 
+  theme(plot.title = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)),
+  rel_widths = c(1,2), align = "h")
+
+```
+
+
+```{r, fig.height = 6, fig.width=7}
+
+nmf_means_id_clus = 
+  aggregate(nmf_values, 
+            by = list(rag2samples$sample_name,
+                      rag2samples$orderedcluster),
+            mean)
+nmf_means_scaled_id_clus =
+  as.data.frame(apply(nmf_means_id_clus[,-c(1:2)], 2, scale))
+nmf_means_scaled_id_clus$Group.1 = nmf_means_id_clus$Group.1
+nmf_means_scaled_id_clus$Group.2 = nmf_means_id_clus$Group.2
+
+ylevels = levels(nmf_means_scaled_id_clus$Group.2)
+
+ggplot(melt(nmf_means_scaled_id_clus, by = c("Group.1","Group.2")), 
+               aes(x = Group.1, 
+                   y = factor(Group.2, levels = rev(ylevels)))) +
+          geom_tile(aes(fill = value)) + 
+  labs(y = "cluster", x = "sample") +
+          scale_fill_viridis_c() + 
+  facet_wrap(~ variable, ncol = 6, labeller = as_labeller(function(x){gsub("nmf20_","f",x)})) + 
+  theme(legend.text = txt,
+        legend.title = txt, 
+        strip.text = txt,
+        axis.title = txt,
+        axis.text = txt,
+        plot.background = element_blank(),
+        panel.background = element_blank(),
+        panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 90,
+                                   hjust = 1, vjust = 0.5),
+        strip.background = element_blank(),
+        legend.key.size = unit(8,"pt")) + 
+  geom_vline(xintercept = 4.5, color = "white")
+
+```
+
+
+
+
+```{r, fig.height = 2, fig.width=6}
+
+for(i in 1:nf){
+  plots = fixShapes(DimOverlay(rag2samples, reduction = "NMF",
+                       dims = i, sampleids = 1:4, pt.size = 0.75,
+                       cols = rev(viridis::magma(9)),
+                       ncol = 4, value.scale = "all",
+                       center.zero = FALSE, show.sb = FALSE), nplots = 4)
+  
+  print(plots & NoLegend())
+}
+
+
+```
+
+```{r}
+
+alldims = ST.DimPlot(rag2samples, dims = 1:20, ncol = 4, reduction = "NMF", 
+           grid.ncol = 4, cols = viridis::magma(n = 9) %>% rev(), pt.border = FALSE,
+           center.zero = F, show.sb = FALSE, label.by = "sample_name", pt.size = 0.4)
+
+#alldims = alldims & facet_wrap(~day) & coord_fixed()
+
+
+
+pathways <- lapply(seq_along(top.genes), function(i) {
+  gset <- top.genes[[i]]
+  df <- gost(query = gset, organism = "mmusculus", sources = "GO:BP")$result
+  if (is.null(df)) return(NULL)
+  df$factor <- paste0("factor_", i)
+  return(df)
+})
+# make sure correct organism or significant = FALSE
+pathways <- do.call(rbind, pathways)
+pathways$GeneRatio <- pathways$intersection_size/pathways$query_size
+pathways.summarized <- pathways %>% 
+  group_by(factor) %>%
+  top_n(n = 3, wt = -log10(p_value))
+pathways.summarized$term_name = 
+  gsub("interspecies interaction",
+       "interspecies\ninteraction",
+       gsub("processing and presentation", 
+       "proc and pres",
+       gsub("exogenous", "exog", 
+       gsub("antigen","ag", pathways.summarized$term_name))))
+p.list <- lapply(1:nf, function(i) {
+  if (!paste0("factor_", i) %in% pathways.summarized$factor) return(NULL)
+  ggplot() +
+    geom_point(data = subset(pathways.summarized, factor %in% paste0("factor_", i)), 
+               aes(reorder(term_name, -log10(p_value)), -log10(p_value), 
+                   #fill = -log10(p_value), 
+                   size = GeneRatio), color = "black") +
+    coord_flip(clip = "off") +
+    facet_grid(~factor) +
+    scale_size_continuous(range = c(0.1, 3), limits = c(0,1)) +
+    #scale_fill_gradientn(colours = viridis::magma(n = 9) %>% rev() %>% rev()) +
+    theme_minimal() +
+    labs(x = "", y = "-log10(p-value)") + 
+    scale_y_continuous(limits = c(0,NA))
+})
+
+```
+
+```{r, fig.height = 2.2, fig.width=6}
+
+for (i in 1:nf) {
+  message(i)
+  plottitle = gsub(paste0("nmf",nf,"_"),"ST_f",alldims[[i]]$labels$title)
+  q1 <- alldims[[i]] + NoLegend() +
+    theme(plot.title = element_blank(),
+          strip.text = element_text(size = 8),plot.margin = margin(0,0,0,0,"pt"))
+  q2 <- p.list[[i]] + NoLegend() + 
+    theme(axis.title = element_text(size = 7),
+          axis.text = element_text(size = 7),
+          strip.text = element_blank())
+  q3 <- FactorGeneLoadingPlot(rag2samples, factor = i, topn = 10) + 
+    theme(axis.title = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 8, face = "italic", color = "black",
+                                     hjust = 0))
+  cowplot::plot_grid(
+    cowplot::plot_grid(
+      cowplot::plot_grid(grid::textGrob(plottitle, rot = 90, gp = grid::gpar(fontsize = 8)),
+                         q1, rel_widths = c(1,10)),
+      q2, ncol = 1, rel_heights = c(0.5,0.3)), 
+                     q3, ncol = 2, rel_widths = c(5, 1)) %>% print()
+}
+
+
+```
+
+
+
+
+```{r}
+
+sessionInfo()
+
+```
+
