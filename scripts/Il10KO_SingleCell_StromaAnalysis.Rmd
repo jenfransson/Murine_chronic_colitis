@@ -35,10 +35,10 @@ library(Seurat)
 library(ggplot2)
 library(cowplot)
 library(clustree)
-
+library(dplyr)
+library(reshape2)
 
 source("../code/SingleCell/color_list.R")
-source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
 
 ```
 
@@ -602,166 +602,9 @@ fibroblasts = subset(alldata, cells = WhichCells(alldata, expression = fibroblas
 rm(alldata)
 gc()
 
-```
-
-
-## Fibroblasts
-
-
-
-```{r}
-
-ntop = 40
-downsample_n = 1000
-txt = element_text(size = 8)
+saveRDS(fibroblasts, paste0(datadir, "fibroblasts.rds"))
 
 ```
-
-
-```{r}
-
-fibroblasts@active.assay <- "RNA"
-
-
-fibroblasts <- FindVariableFeatures(fibroblasts)
-fibroblasts <- ScaleData(fibroblasts, features = VariableFeatures(fibroblasts))
-
-fibroblasts <- RunNMF(object = fibroblasts, assay = "RNA", nfactors = ntop,
-              n.cores = 1)
- 
-
-for(i in 1:ntop){
-  fibroblasts <- AddMetaData(fibroblasts, fibroblasts@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
-                     paste0("nmf_",i))
-}
-
-fibroblasts$Week = as.numeric(gsub("W","",fibroblasts$Week))
-
-fibroblasts = AddMetaData(fibroblasts, factor(paste(fibroblasts$Genotype, fibroblasts$Week),
-                              levels = c("WT 6", 
-                                         paste0("Il10KO ", 
-                                               c(6,8,10,12,14)))), 
-                  "G_W")
-
-```
-
-```{r}
-
-pvaluelist = getfactorpvalues_Il10(fibroblasts, downsample_n, ntop)
-modelpvalues = pvaluelist$modelpvalues
-rank_modelpvalues = pvaluelist$rank_modelpvalues
-rm(pvaluelist)
-
-
-pvaluegg = melt(modelpvalues, variable.name = "factor",
-                value.name =  "p.value")
-pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
-
-
-fibroblasts_values = fibroblasts@meta.data[,grep("^nmf_", colnames(fibroblasts@meta.data))]
-
-fibroblasts_scaled = apply(fibroblasts_values, 2, scale)
-
-fibroblasts_scaled_means_id = aggregate(fibroblasts_scaled, by = list(fibroblasts$G_W), mean)
-fibroblasts_means_id = aggregate(fibroblasts_values, by = list(fibroblasts$G_W), mean)
-fibroblasts_means_scaled_id = as.data.frame(apply(fibroblasts_means_id[,-1], 2, scale))
-fibroblasts_means_scaled_id$Group.1 = fibroblasts_means_id$Group.1
-
-fibroblasts_scaled_means_cluster = aggregate(fibroblasts_scaled, by = list(fibroblasts$NamedCluster), mean)
-fibroblasts_means_cluster = aggregate(fibroblasts_values, by = list(fibroblasts$NamedCluster), mean)
-if(nrow(fibroblasts_means_cluster)==1){
-  fibroblasts_means_scaled_cluster = as.data.frame(rbind(apply(fibroblasts_means_cluster[,-1], 2, scale)))
-  fibroblasts_means_scaled_cluster$Group.1 = fibroblasts_means_cluster$Group.1
-  fibroblasts_means_scaled_cluster[1,is.nan(as.numeric(fibroblasts_means_scaled_cluster[1,]))] = 0
-}else{
-  fibroblasts_means_scaled_cluster = as.data.frame(apply(fibroblasts_means_cluster[,-1], 2, scale))
-  fibroblasts_means_scaled_cluster$Group.1 = fibroblasts_means_cluster$Group.1
-}
-
-```
-
-```{r, fig.show="hide"}
-
-ph_sample = pheatmap(fibroblasts_means_scaled_id[,paste0("nmf_", 1:ntop)])
-
-ph_order = ph_sample$tree_col$order
-
-```
-
-```{r, fig.width = 2.5, fig.height = 6}
-
-my_dotp = ggplot(melt(fibroblasts_means_scaled_id), 
-                 aes(x = Group.1, 
-                     y = factor(variable, 
-                                levels = rev(paste0("nmf_",ph_order))))) +
-  geom_tile(aes(fill = value)) + 
-  geom_vline(color = "white", xintercept = 1.5) +
-  scale_fill_viridis_c() + 
-  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
-  theme_classic() + 
-  theme(axis.text = txt,
-        axis.title = element_blank(),
-        plot.title = element_blank(),
-        legend.text = txt,
-        legend.title = txt,
-        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
-  scale_size_continuous(limits = c(0,100), range= c(0,3))
-
-my_dotp_cl = ggplot(melt(fibroblasts_means_scaled_cluster), 
-                 aes(x = Group.1, 
-                     y = factor(variable, 
-                                levels = rev(paste0("nmf_",ph_order))))) +
-  geom_tile(aes(fill = value)) + scale_fill_viridis_c() +
-  theme_classic() +
-  theme(axis.text = txt,
-        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-        axis.title = element_blank(),
-        legend.text = txt,
-        axis.text.y = element_blank(),
-        legend.key.size = unit(8,"pt"),
-        plot.title = element_blank(),
-        legend.position = "bottom",
-        legend.title = txt) + 
-  scale_size_continuous(limits = c(0,100))
-
-lmp = ggplot(pvaluegg,
-       aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
-  geom_tile(aes(fill = -log10(p.value))) + 
-  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
-  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
-  theme_classic() + 
-  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
-        axis.text.y = element_blank(),
-        axis.title = element_blank(),
-        legend.title = element_text(size = 8),
-        legend.position = "bottom",
-        legend.direction = "vertical",
-        legend.text = element_text(size = 8),
-        legend.key.size = unit(8,"pt"))
-
-scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
-               max(my_dotp$data$value, my_dotp_cl$data$value))
-
-plot_grid(my_dotp + 
-            scale_fill_viridis_c(limits = scalerange) + 
-            theme(axis.title = element_blank(),
-                  legend.position = "bottom",
-                      legend.key.size = unit(8,"pt")),
-          my_dotp_cl + 
-            scale_fill_viridis_c(limits = scalerange),
-          lmp + 
-            labs(fill = ""), 
-          align = "h", ncol = 3, rel_widths = c(3.5,2.7,1)
-          )
-
-```
-
-```{r, fig.height = 2, fig.width = 4}
-
-showfactors_Il10(fibroblasts)
-
-```
-
 
 # Session info
 
