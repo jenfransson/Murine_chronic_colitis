@@ -448,7 +448,7 @@ plot_grid(ggplot(unique(ct$data[,c("y","CCA_snn_res.")]),
 ```
 
 
-# Differential expression and annotation
+# Differential expression and annotation of clusters
 
 The different clusters are annotated using differential expression and known marker genes. For legibility, the annotations are here given prior to differential expression and gene marker information.
 
@@ -540,7 +540,8 @@ markergenes =
 
 ```
 
-```{r dotplot, fig.height = 6, fig.width = 3}
+```{r dotplot, fig.height = 7, fig.width = 4}
+
 
 alldata@active.ident = factor(alldata$NamedCluster,
                               levels = clusterorder)
@@ -550,11 +551,11 @@ dot = dot + aes(x = id, y = features.plot) +
   labs(y = "Genes",x = "Clusters") + 
   scale_size(range = c(0.5,2.5), breaks = c(0,50,100), limits = c(0,100)) +
   theme(legend.position = "right", legend.title = element_blank(),
-        axis.text.x = element_text(size = 6, angle = 90, hjust = 0),
-        axis.text.y = element_text(size = 6, face = "italic"),
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 0),
+        axis.text.y = element_text(size = 8, face = "italic"),
         legend.key.width = unit(0.3, "cm"), 
         legend.key.height = unit(0.3,"cm"), 
-        legend.text = element_text(size = 6),
+        legend.text = element_text(size = 8),
         axis.title = element_text(size = 8)) 
 
 dot$scales$scales[[1]]$limits = c(-1.8,2.7)

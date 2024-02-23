@@ -387,7 +387,7 @@ plot_grid(ggplot(unique(ct$data[,c("y","CCA_snn_res.")]),
 
 ```
 
-# Differential expression and annotation
+# Differential expression and annotation of clusters
 
 The different clusters are annotated using differential expression and known marker genes. For legibility, the annotations are here given prior to differential expression and gene marker information.
 
@@ -491,7 +491,7 @@ markergenes = c('Icos', 'Il7r', 'Cd3d', 'Cd3e', 'Cd3g', 'Cd4',
 
 ```
 
-```{r dotplot, fig.height = 6, fig.width = 4}
+```{r dotplot, fig.height = 7, fig.width = 5}
 
 alldata@active.ident = factor(alldata$NamedCluster,
                               levels = clusterorder)
@@ -501,11 +501,11 @@ dot = dot + aes(x = id, y = features.plot) +
   labs(y = "Genes",x = "Clusters") + 
   scale_size(range = c(0.5,2.5), breaks = c(0,50,100), limits = c(0,100)) +
   theme(legend.position = "right", legend.title = element_blank(),
-        axis.text.x = element_text(size = 6, angle = 90, hjust = 0),
-        axis.text.y = element_text(size = 6, face = "italic"),
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 0),
+        axis.text.y = element_text(size = 8, face = "italic"),
         legend.key.width = unit(0.3, "cm"), 
         legend.key.height = unit(0.3,"cm"), 
-        legend.text = element_text(size = 6),
+        legend.text = element_text(size = 8),
         axis.title = element_text(size = 8)) 
 
 dot$scales$scales[[1]]$limits = c(-1.8,2.7)
@@ -526,7 +526,7 @@ alldata <- ScaleData(alldata)
   
 ```
 
-```{r, fig.height = 2.2, fig.width = 2.3}
+```{r, fig.height = 3.5, fig.width = 5}
 
 alldata@active.assay <- "FB"
 
@@ -536,17 +536,16 @@ dot = dot + aes(x = id, y = features.plot) + scale_x_discrete(position = "top") 
   labs(y = "Antibodies",x = "Clusters") +
   scale_size(range = c(0.1,2.5), breaks = c(60,80,100)) +
   theme(legend.position = "bottom", legend.title = element_blank(),
-        axis.text.x = element_text(size = 6, hjust = 0, angle = 90),
-        axis.text.y = element_text(size = 6),
+        axis.text.x = element_text(size = 8, hjust = 0, angle = 90),
+        axis.text.y = element_text(size = 8),
         legend.key.width = unit(0.3, "cm"),
         legend.key.height = unit(0.3,"cm"),
-        legend.text = element_text(size = 6),
+        legend.text = element_text(size = 8),
         axis.title.y = element_text(size = 8),
         axis.title.x = element_blank()) +
   scale_y_discrete(labels = function(x){gsub("-TotalSeqB","",x)})
 
-dot + theme(legend.position = "none")
-plot_grid(get_legend(dot))
+dot
 
 ```
 
@@ -674,7 +673,7 @@ for(ds in datasets){
 
 ```
 
-```{r, fig.height = 3, fig.width = 7}
+```{r, fig.height = 3.5, fig.width = 7}
 
 barplot + geom_bar(stat = "identity", width = 0.6, color = "black") + 
   theme(axis.text = element_text(size = 8),

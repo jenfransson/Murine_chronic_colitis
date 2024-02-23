@@ -79,7 +79,7 @@ if(file.exists(owncache)){
 ntop = 40
 downsample_n = 500
 
-if(!file.exists(paste0(owncache,"CD4_NMF.RData"))){
+if(!file.exists(paste0(owncache,"TCT_CD4_NMF.RData"))){
 
   TCT_CD4Tcells = readRDS(file = "../data/SingleCell/TcellTransfer/R_objects/CD4Tcells.rds")
   
@@ -94,10 +94,10 @@ if(!file.exists(paste0(owncache,"CD4_NMF.RData"))){
                   n.cores = 1)
   
   if(file.exists(owncache)){
-    save(TCT_CD4Tcells, file = paste0(owncache, "CD4_NMF.RData"))
+    save(TCT_CD4Tcells, file = paste0(owncache, "TCT_CD4_NMF.RData"))
   }
 }else{
-   load(paste0(owncache, "CD4_NMF.RData"))
+   load(paste0(owncache, "TCT_CD4_NMF.RData"))
 }
 
 
