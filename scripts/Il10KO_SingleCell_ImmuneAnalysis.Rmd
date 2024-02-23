@@ -412,7 +412,7 @@ VlnPlot(alldata, features = c("nFeature_RNA", "nCount_RNA", "percent_mito", "per
 
 ## Differential expression
 
-The top 15 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
+The top 25 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
 
 ```{r,  fig.height = 3, fig.width=2}
 
@@ -431,10 +431,10 @@ if(!file.exists(paste0(owncache, "clustermarkers.rds"))){
   
 }
 
-top15 <- markers_genes %>% group_by(cluster) %>% top_n(-15, p_val)
+top25 <- markers_genes %>% group_by(cluster) %>% top_n(-25, p_val)
 
-out = lapply(unique(top15$cluster), function(i){
-  markersdata = top15[top15$cluster==i,]
+out = lapply(unique(top25$cluster), function(i){
+  markersdata = top25[top25$cluster==i,]
   markersdata$gene = factor(markersdata$gene, 
                             levels = markersdata$gene[order(markersdata$avg_log2FC)])
   print(ggplot(markersdata, aes(x = avg_log2FC, y = gene)) + 
@@ -682,6 +682,9 @@ plot_grid(plotlist = lapply(c("Tcell","Bcell","neutrophil"),
 ```
 
 ```{r}
+
+alldata@active.assay = "RNA"
+alldata[["CCA"]] = NULL
 
 Tcells = subset(alldata, cells = WhichCells(alldata, expression = Tcell %in% alldata$NamedCluster))
 Bcells = subset(alldata, cells = WhichCells(alldata, expression = Bcell %in% alldata$NamedCluster))

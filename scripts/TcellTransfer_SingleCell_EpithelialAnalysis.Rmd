@@ -492,7 +492,7 @@ dp
 
 ## Differential expression
 
-The top 15 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
+The top 25 DEGs (based on p-value) for each cluster are shown below, ordered by log2(FC).
 
 ```{r, fig.width = 2, fig.height = 3}
 
@@ -512,10 +512,10 @@ if(!file.exists(paste0(owncache, "clustermarkers.rds"))){
    markers_genes = readRDS(paste0(owncache, "clustermarkers.rds"))
 }
 
-top15 <- markers_genes %>% group_by(cluster) %>% top_n(-15, p_val)
+top25 <- markers_genes %>% group_by(cluster) %>% top_n(-25, p_val)
 
-out = lapply(unique(top15$cluster), function(i){
-  markersdata = top15[top15$cluster==i,]
+out = lapply(unique(top25$cluster), function(i){
+  markersdata = top25[top25$cluster==i,]
   markersdata$gene = 
     factor(markersdata$gene, 
            levels = markersdata$gene[order(markersdata$avg_log2FC)])
@@ -759,7 +759,7 @@ stemcolono =
 goblet = subset(alldata, cells = WhichCells(alldata, expression = goblet %in% alldata$NamedCluster))
 
 rm(alldata)
-gc()
+trash = gc()
 
 saveRDS(stemcolono, file = paste0(datadir,"colonocytesandprogenitors.rds"))
 saveRDS(goblet, file = paste0(datadir,"gobletcells.rds"))
