@@ -268,6 +268,8 @@ Il10_Tcells@active.assay <- "RNA"
 Il10_Tcells <- FindVariableFeatures(Il10_Tcells)
 Il10_Tcells <- ScaleData(Il10_Tcells, features = VariableFeatures(Il10_Tcells))
 
+set.seed(1)
+
 Il10_Tcells <- RunNMF(object = Il10_Tcells, assay = "RNA", nfactors = ntop,
               n.cores = 1)
  
@@ -427,6 +429,8 @@ Il10_Bcells@active.assay <- "RNA"
 
 Il10_Bcells <- FindVariableFeatures(Il10_Bcells)
 Il10_Bcells <- ScaleData(Il10_Bcells, features = VariableFeatures(Il10_Bcells))
+
+set.seed(1)
 
 Il10_Bcells <- RunNMF(object = Il10_Bcells, assay = "RNA", nfactors = ntop,
               n.cores = 1)
@@ -765,6 +769,8 @@ Il10_neutrophils@active.assay <- "RNA"
 Il10_neutrophils <- FindVariableFeatures(Il10_neutrophils)
 Il10_neutrophils <- ScaleData(Il10_neutrophils, features = VariableFeatures(Il10_neutrophils))
 
+set.seed(1)
+
 Il10_neutrophils <- RunNMF(object = Il10_neutrophils, assay = "RNA", nfactors = ntop,
               n.cores = 1)
  
@@ -1088,6 +1094,8 @@ Il10_fibroblasts@active.assay <- "RNA"
 Il10_fibroblasts <- FindVariableFeatures(Il10_fibroblasts)
 Il10_fibroblasts <- ScaleData(Il10_fibroblasts, features = VariableFeatures(Il10_fibroblasts))
 
+set.seed(1)
+
 Il10_fibroblasts <- RunNMF(object = Il10_fibroblasts, assay = "RNA", nfactors = ntop,
               n.cores = 1)
  
@@ -1409,12 +1417,6 @@ showfactors_TCT(SplitObject(TCT_stemcolono, split.by = "ModelTreatment"),
 
 ```
 
-```{r, results = FALSE}
-
-rm(TCT_stemcolono)
-gc()
-
-```
 
 ## Il10-/-
 
@@ -1436,6 +1438,8 @@ Il10_stemcolono@active.assay <- "RNA"
 
 Il10_stemcolono <- FindVariableFeatures(Il10_stemcolono)
 Il10_stemcolono <- ScaleData(Il10_stemcolono, features = VariableFeatures(Il10_stemcolono))
+
+set.seed(1)
 
 Il10_stemcolono <- RunNMF(object = Il10_stemcolono, assay = "RNA", nfactors = ntop,
               n.cores = 1)
@@ -1574,13 +1578,6 @@ showfactors_Il10(Il10_stemcolono)
 
 ```
 
-
-```{r, results = FALSE}
-
-rm(Il10_stemcolono)
-gc()
-
-```
 
 # Goblet cells
 
@@ -1761,12 +1758,6 @@ showfactors_TCT(SplitObject(TCT_goblet, split.by = "ModelTreatment"),
 
 ```
 
-```{r, results = FALSE}
-
-rm(TCT_goblet)
-gc()
-
-```
 
 ## Il10-/-
 
@@ -1785,6 +1776,8 @@ Il10_goblet@active.assay <- "RNA"
 
 Il10_goblet <- FindVariableFeatures(Il10_goblet)
 Il10_goblet <- ScaleData(Il10_goblet, features = VariableFeatures(Il10_goblet))
+
+set.seed(1)
 
 Il10_goblet <- RunNMF(object = Il10_goblet, assay = "RNA", nfactors = ntop,
               n.cores = 1)
@@ -1925,10 +1918,119 @@ showfactors_Il10(Il10_goblet)
 
 ```
 
-```{r, results = FALSE}
 
-rm(Il10_goblet)
-gc()
+# Antigen presentation in colonocytes and goblet cells
+
+```{r}
+
+alldata_list = list(
+  Il10_stemcolono,
+  Il10_goblet,
+  TCT_stemcolono,
+  TCT_goblet
+)
+
+alldata = merge(merge(alldata_list[[1]], alldata_list[[2]]),alldata_list[[4]])
+
+alldata_list = alldata_list[[3]]
+trash = gc()
+
+alldata = merge(alldata, alldata_list)
+rm(alldata_list)
+trash = gc()
+
+alldata@active.assay <- "RNA"
+
+alldata$Time[is.na(alldata$Time)] = alldata$Week[is.na(alldata$Time)]
+alldata$Time = factor(alldata$Time, 
+                      levels = c("W0","W1","W2","W3","W4","W5","W6","W7","W8","W10","W12","W14",
+                                 "D0","D10","D20","D30","D40","D50","D60"))
+
+alldata$Genotype[alldata$Model %in% c("SCID","Rag2")] = 
+  alldata$Model[alldata$Model %in% c("SCID","Rag2")]
+alldata$Model[alldata$Genotype %in% c("WT","Il10KO")] = "Il10"
+alldata$Model[alldata$Model %in% c("SCID","Rag2")] = "TCT"
+alldata$Model = factor(alldata$Model,
+                       levels = c("Il10", "TCT"))
+
+alldata$Genotype = factor(alldata$Genotype, levels = unique(alldata$Genotype))
+
+alldata$Treatment[is.na(alldata$Treatment)] = "na"
+alldata$Treatment[alldata$Genotype %in% "WT"] = "ut"
+alldata$Treatment = factor(alldata$Treatment, levels = c("ut","na","il"))
+
+
+alldata$sample = factor(alldata$orig.ident,
+                        levels =
+                          unique(
+                            alldata$orig.ident[order(alldata$Model, alldata$Genotype,
+                                                     alldata$Treatment, alldata$Time)]))
+
+alldata$RelTime[alldata$Model=="Il10"] = 
+  (as.numeric(gsub("W","",alldata$Week[alldata$Model=="Il10"])) - 6) / (14-6)
+
+
+ag_pres = read.csv2("../annotation/GO_antigenprocessingandpresentation.csv")
+
+
+```
+
+```{r, fig.height = 3, fig.width = 5}
+
+
+alldata = AddMetaData(alldata, c("CC/Progenitor","Goblet")[is.na(alldata$stemcolono)+1], "celltype")
+
+alldata = AddModuleScore(alldata, ag_pres)
+
+scoreviolin = VlnPlot(group.by = "sample",
+                      features = "Cluster1", object = alldata, pt.size = 0)
+
+
+timecolors = data.frame(RelTime= sort(unique(alldata$RelTime)),
+           color = viridis(101)[round(sort(unique(alldata$RelTime))*100)+1])
+identtimecolors = unique(alldata@meta.data[,c("RelTime","orig.ident")])
+identtimecolors$color = timecolors$color[match(identtimecolors$RelTime, timecolors$RelTime)]
+
+identcolors = identtimecolors$color
+names(identcolors) = identtimecolors$orig.ident
+
+scoreviolin$data$Model = alldata$Model
+scoreviolin$data$celltype = alldata$celltype
+scoreviolin$data$genotype = alldata$Genotype
+
+scoreviolin + NoLegend() + scale_fill_manual(values = identcolors) + 
+  stat_summary(geom = "point", position = position_dodge(width = 0.9)) + 
+  facet_grid(rows = vars(celltype), cols =  vars(genotype),
+             scales = "free_x", space = "free_x") + 
+  scale_x_discrete(labels = function(x){
+    gsub("G_","",gsub("_EPI","",gsub("_Epi","",gsub("IL10_","",
+      gsub("BALBc_","",gsub("_E_ut","",gsub("_E_il","_aIL12",x)))))))
+    }) +
+  theme(plot.title = element_blank(),
+        strip.text = element_text(size = 8),
+        strip.background = element_blank(),
+        axis.text = element_text(size = 8),
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 8)) + 
+  labs(y = "Module score")
+
+```
+
+```{r}
+
+ggplot(aggregate(alldata$Cluster1,
+          by = list(paste0(alldata$Model,"_",alldata$NamedCluster), alldata$sample), 
+          mean), aes(y = Group.1, x = Group.2)) + 
+  geom_tile(aes(fill = x)) + 
+  scale_fill_viridis_c() + 
+  scale_x_discrete(labels = function(x){
+    gsub("G_","",gsub("_EPI","",gsub("_Epi","",gsub("IL10_","",
+      gsub("BALBc_","",gsub("_E_ut","",gsub("_E_il","_aIL12",x)))))))
+    }) +
+  scale_y_discrete(labels = function(x){gsub("il10_","",gsub("cd45_","",x))}) + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(x = "Sample",y = "Cluster", fill = "Module\nscore")
 
 ```
 
