@@ -76,10 +76,28 @@ This report describes the analysis performed on scRNA-seq data from epithelial c
 
 Due to a large heterogeneity of cell quality in multiple samples, a filtering step is added to only include cells with > 1500 unique genes.
 
+## Pre-filtering QC
+
+
+
+```{r}
+
+alldata = readRDS(paste0(datadir,"epithelial_data.rds"))
+
+```
+
+```{r, fig.height=4, fig.width=6}
+
+VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
+  violintheme
+
+```
+
+## Filtering
+
 ```{r}
 
 if(!file.exists(paste0(owncache,"first_dr.RData"))){
-  alldata = readRDS(paste0(datadir,"epithelial_data.rds"))
   
   alldata <- subset(alldata, cells = WhichCells(alldata, expression = nFeature_RNA>1500))
   
@@ -116,7 +134,7 @@ VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol
 
 # Dimensional reduction - pre-integration
 
-The data is first processed in the same way as the full dataset, with PCA on the 2000 most highly variable genes and subsequent UMAP for visualization. As can be seen below, some differences can be seen between the Rag2-/- and SCID backgrounds at this level of reduction.
+The data is first processed in the same way as the full dataset, with PCA on the 2000 most highly variable genes and subsequent UMAP for visualization.
 
 ## Highly variable features
 
@@ -428,11 +446,12 @@ if(!file.exists(paste0(owncache, "clustermarkers.rds"))){
   
 }
 
-top25 <- markers_genes %>% group_by(cluster) %>% top_n(-25, p_val)
+top15 <- markers_genes %>% group_by(cluster) %>% top_n(-15, p_val)
 
-out = lapply(unique(top25$cluster), function(i){
-  markersdata = top25[top25$cluster==i,]
-  markersdata$gene = factor(markersdata$gene, levels = rev(markersdata$gene))
+out = lapply(unique(top15$cluster), function(i){
+  markersdata = top15[top15$cluster==i,]
+  markersdata$gene = factor(markersdata$gene, 
+                            levels = markersdata$gene[order(markersdata$avg_log2FC)])
   print(ggplot(markersdata, aes(x = avg_log2FC, y = gene)) + 
           labs(title = i) + 
     geom_bar(stat = "identity") + 
@@ -608,7 +627,7 @@ barplot + geom_bar(stat = "identity", width = 0.6, color = "black") +
 
 # Subset analyses
 
-To evaluate the changes of gene expression specfically in CD4+ T cells, B and plasma cells, and neutrophils, these clusters are isolated. The UMAP shows the included cells for each analysis.
+To evaluate the changes of gene expression specfically in colonocytes and progenitors as well as goblet cells, these clusters are isolated. The UMAP shows the included cells for each analysis. Subsets are saved to `r datadir`.
 
 ```{r}
 

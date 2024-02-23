@@ -431,11 +431,12 @@ if(!file.exists(paste0(owncache, "clustermarkers.rds"))){
   
 }
 
-top25 <- markers_genes %>% group_by(cluster) %>% top_n(-25, p_val)
+top15 <- markers_genes %>% group_by(cluster) %>% top_n(-15, p_val)
 
-out = lapply(unique(top25$cluster), function(i){
-  markersdata = top25[top25$cluster==i,]
-  markersdata$gene = factor(markersdata$gene, levels = rev(markersdata$gene))
+out = lapply(unique(top15$cluster), function(i){
+  markersdata = top15[top15$cluster==i,]
+  markersdata$gene = factor(markersdata$gene, 
+                            levels = markersdata$gene[order(markersdata$avg_log2FC)])
   print(ggplot(markersdata, aes(x = avg_log2FC, y = gene)) + 
           labs(title = i) + 
     geom_bar(stat = "identity") + 
@@ -444,9 +445,6 @@ out = lapply(unique(top25$cluster), function(i){
           plot.title = element_text(size = 8),
           axis.text = element_text(size = 8)))
   
-    # barplot(sort(setNames(top25$avg_log2FC, top25$gene)[top25$cluster == i], F), horiz = T, 
-    #     las = 1, main = paste0(i, " vs. rest"), border = "white", yaxs = "i")
-    # abline(v = c(0, 0.2), lty = c(1, 2))
 })
 
 ```
@@ -649,7 +647,7 @@ barplot + geom_bar(stat = "identity", width = 0.6, color = "black") +
 
 # Subset analyses
 
-To evaluate the changes of gene expression specfically in CD4+ T cells, B and plasma cells, and neutrophils, these clusters are isolated. The UMAP shows the included cells for each analysis.
+To evaluate the changes of gene expression specfically in CD4+ T cells, B and plasma cells, and neutrophils, these clusters are isolated. The UMAP shows the included cells for each analysis. Subsets are saved to `r datadir`.
 
 ```{r}
 
@@ -690,7 +688,7 @@ Bcells = subset(alldata, cells = WhichCells(alldata, expression = Bcell %in% all
 neutrophils = subset(alldata, cells = WhichCells(alldata, expression = neutrophil %in% alldata$NamedCluster))
 
 rm(alldata)
-gc()
+trash = gc()
 
 
 saveRDS(Tcells, paste0(datadir,"Tcells.rds"))
