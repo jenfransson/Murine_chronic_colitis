@@ -2,7 +2,7 @@
 title: "Preparation of data for T cell transfer single cell analysis"
 editor_options:
   chunk_output_type: console
-date: "`r format(Sys.time(), '%d %B, %Y')`"
+date: "27 Februrary, 2024"
 output:
   bookdown::html_document2:
     code_folding: hide
@@ -76,7 +76,7 @@ if(file.exists(owncache)){
 
 if(!file.exists(paste0(owncache,"/loading_matrices.RData"))){
 
-plan("multisession", workers = 20, gc = TRUE)
+plan("multisession", workers = 16, gc = TRUE)
 
 loadObject = function(d){
   sample = sub("\\.h5","",sub(".*/","",d))
