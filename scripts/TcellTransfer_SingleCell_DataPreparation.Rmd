@@ -76,7 +76,7 @@ if(file.exists(owncache)){
 
 if(!file.exists(paste0(owncache,"/loading_matrices.RData"))){
 
-plan("multisession", workers = 16, gc = TRUE)
+plan("multisession", workers = 20, gc = TRUE)
 
 loadObject = function(d){
   sample = sub("\\.h5","",sub(".*/","",d))

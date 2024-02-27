@@ -1,8 +1,8 @@
 ---
-title: "Preparation of data for Il10KO single cell analysis"
+title: "Preparation of data for Il10-/- colitis single cell analysis"
 editor_options:
   chunk_output_type: inline
-date: "`r format(Sys.time(), '%d %B, %Y')`"
+date: "26 February, 2024"
 output:
   bookdown::html_document2:
     code_folding: hide
@@ -25,9 +25,6 @@ knitr::opts_chunk$set(fig.width  = 7,
 
 ```
 
-
-
-
 ```{r setup}
  
 library(Seurat)
@@ -36,8 +33,6 @@ library(ggplot2)
 
 library(cowplot)
 library(DoubletFinder)
-# library(clustree)
-# 
 library(future)
 library(future.apply)
  
@@ -46,12 +41,8 @@ datadir = "../data/SingleCell/Il10KO/expression_matrices"
 owncache = "../data/SingleCell/Il10KO/cache/"
 
 violintheme = theme(axis.text = element_text(size = 8),
-        plot.title = element_text(size = 8),
-        legend.key.size = unit(8, "pt"),
+        plot.title = element_text(size = 10),
         axis.title = element_blank())
-dimtheme = theme(legend.text = element_text(size = 8),
-        plot.title = element_text(size = 8),
-        legend.key.size = unit(8, "pt"))
 
 dotviolin = function(v){
   v[[1]]$layers[[2]]$aes_params$shape = 16
@@ -88,15 +79,13 @@ if(file.exists(owncache)){
 
 ```
 
-# Gene expression matrices
-
-The gene expression matrices were produced using CellRanger on the raw .fastq-files. These files can be found at 
+# Load data
 
 ```{r loading_matrices}
 
 if(!file.exists(paste0(owncache,"/loading_matrices.RData"))){
 
-plan("multisession", workers = 4, gc = TRUE)
+plan("multisession", workers = 16, gc = TRUE)
 
 loadObject = function(d){
   sample = sub("\\.h5","",sub(".*/","",d))
@@ -127,28 +116,14 @@ alldata = merge(x = all_matrices[[sampleorder[1]]],
                 y = all_matrices[sampleorder[-1]],
                 add.cell.ids = sampleorder)
 
-  immunesamples = sampleorder[grep("_IMM",sampleorder)]
-  immune_matrices = lapply(all_matrices[immunesamples], 
-                         function(x){
-                           x@active.assay = "FB"
-                           x[["RNA"]] = NULL
-                           x
-                         })
-  rm(all_matrices)
-
-  alldata_FB = merge(immune_matrices[[1]],
-                   immune_matrices[-1],
-                   add.cell.ids = immunesamples)
-  
-  if(file.exists(owncache)){
-    save(alldata,alldata_FB, file = paste0(owncache,"/loading_matrices.RData"))
-  }
-
+rm(all_matrices)
 rm(loadObject)
 gc()
 
-plan("sequential")
-
+if(file.exists(owncache)){
+  save(alldata, file = paste0(owncache,"/loading_matrices.RData"))
+  saveRDS(alldata@meta.data, file = paste0(owncache,"/originalmetadata.rds"))
+}
 
 }else{
   load(paste0(owncache,"/loading_matrices.RData"))
@@ -184,7 +159,7 @@ alldata <- PercentageFeatureSet(alldata, "^Rp[sl]", col.name = "percent_ribo")
 
 Number of features and counts and percentage of mitochondrial and ribosomal RNA are plotted below.
 
-```{r qc, fig.height=4, fig.width=6}
+```{r qc, fig.height=10}
 
 
 VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
@@ -219,28 +194,28 @@ save(alldata, file = paste0(owncache,"/filtering.RData"))
 
 ```
 
-```{r, fig.height=4, fig.width=6}
+```{r type_qc_violins, fig.height = 10}
 
 VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) &
     NoLegend() & violintheme
 
 
-VlnPlot(alldata,
-        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Immune"]),
+VlnPlot(subset(alldata,
+               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Immune"])),
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
     NoLegend() & violintheme
-VlnPlot(alldata,
-        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Stroma"]),
+VlnPlot(subset(alldata,
+               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Stroma"])),
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
     NoLegend() & violintheme
-VlnPlot(alldata,
-        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Epithelial"]),
+VlnPlot(subset(alldata,
+               idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$orig.ident == "Epithelial"])),
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
     NoLegend() & violintheme
 
 ```
 
-```{r topexpressed, fig.height = 6, fig.width = 6, cache = TRUE}
+```{r topexpressed, fig.height = 10, cache = TRUE}
 
 par(mar = c(4, 8, 2, 1))
 C <- subset(alldata, downsample = 1000, seed = 42)@assays$RNA@counts
@@ -268,9 +243,15 @@ alldata <- alldata[!grepl("Malat1", rownames(alldata)) &
 ```
 
 
-`r knitr::kable(table(alldata$orig.ident))`
+
+knitr::kable(table(alldata$orig.ident))
 
 
+```{r}
+
+message(ls())
+
+```
 
 
 # Cell cycle scores
@@ -304,6 +285,7 @@ if(!file.exists(paste0(owncache,"/cellcyclescores.RData"))){
 # Before running CellCycleScoring the data need to be normalized and
 # logtransformed.
 
+plan("sequential")
 alldata = NormalizeData(alldata)
 
 alldata <- CellCycleScoring(object = alldata, g2m.features = g2mFeat,
@@ -328,7 +310,7 @@ if(file.exists(owncache)){
 ```
 
 
-```{r, fig.width = 6, fig.height = 3}
+```{r}
 
 VlnPlot(alldata, features = c("S.Score", "G2M.Score"), group.by = "orig.ident",
         pt.size = 0) & violintheme
@@ -348,6 +330,7 @@ if(!file.exists(paste0(owncache,"/doublets.RData"))){
 
   
   if(!file.exists(paste0(owncache,"/doublet_prep.RData"))){
+    plan("sequential")
     
       alldata = FindVariableFeatures(alldata)
       alldata = ScaleData(alldata, vars.to.regress = c("nFeature_RNA", "percent_mito"))
@@ -363,6 +346,8 @@ if(!file.exists(paste0(owncache,"/doublets.RData"))){
     load(paste0(owncache,"/doublet_prep.RData"))
   }
   
+  
+  plan("sequential")
 
   if(!file.exists(paste0(owncache,"sweeplist.rds"))){
     sweeplist = list()
@@ -422,35 +407,35 @@ if(file.exists(owncache)){
   load(paste0(owncache,"/doublets.RData"))
 }
 
+plan("sequential")
 
 ```
 
-```{r, fig.height = 3, fig.width = 6}
+```{r}
 
-plot_grid(ncol = 2, DimPlot(alldata, group.by = "orig.ident") + NoAxes() + NoLegend() + dimtheme,
-    DimPlot(alldata, group.by = "DF") + NoAxes()) + dimtheme
+plot_grid(ncol = 2, DimPlot(alldata, group.by = "orig.ident") + NoAxes() + NoLegend(),
+    DimPlot(alldata, group.by = "DF") + NoAxes())
 
 
 ```
 
 
 
-```{r df_dimplot, fig.height = 4, fig.width=4}
+```{r df_dimplot, fig.height = 10}
 
 DimPlot(alldata, group.by = "DF", split.by = "orig.ident", ncol = 6) + NoAxes() & 
   theme(plot.title = element_text(size = 8),
-        strip.text = element_text(size = 8),
-        legend.position = "bottom") + dimtheme 
+        strip.text = element_text(size = 8))
 
 ```
 
 
-```{r df_violins, fig.height = 2, fig.width = 4}
+```{r df_violins}
 
-VlnPlot(alldata, features = "nFeature_RNA", group.by = "DF", pt.size = 0) + violintheme
+VlnPlot(alldata, features = "nFeature_RNA", group.by = "DF", pt.size = 0)
 VlnPlot(alldata, features = "nFeature_RNA", split.by = "DF", group.by = "orig.ident", pt.size = 0)  &
   theme(plot.title = element_text(size = 8),
-        axis.text = element_text(size = 8)) + violintheme
+        axis.text = element_text(size = 8))
 
 
 ```
@@ -465,7 +450,7 @@ alldata = alldata[, alldata@meta.data[, "DF"] == "Singlet"]
 
 
 
-```{r cellcounts, fig.height = 3, fig.width = 4}
+```{r cellcounts}
 
 cellfreq = as.data.frame(table(alldata$orig.ident), stringsAsFactors = FALSE)
 cellfreq$Type = alldata$Type[match(cellfreq$Var1, alldata$orig.ident)]
@@ -480,7 +465,7 @@ ggplot(cellfreq, aes(x = Var1, y = Freq, color = Type)) + geom_point() +
 ```
 
 
-```{r, fig.height = 3, fig.width = 6}
+```{r violins}
 
 VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
     NoLegend() &
@@ -489,20 +474,17 @@ VlnPlot(alldata, group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol
 ```
 
 
-```{r typeviolins, fig.height = 3, fig.width = 6}
+```{r typeviolins}
 
-VlnPlot(alldata,
-        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Immune"]),
+VlnPlot(alldata[,alldata$Type == "Stroma"],
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
     NoLegend() &
   violintheme
-VlnPlot(alldata,
-        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Stroma"]),
+VlnPlot(alldata[,alldata$Type == "Epithelial"],
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
     NoLegend() &
   violintheme
-VlnPlot(alldata,
-        idents = unique(alldata@meta.data$orig.ident[alldata@meta.data$Type == "Epithelial"]),
+VlnPlot(alldata[,alldata$Type == "Immune"],
         group.by = "orig.ident", features = qc_feats, pt.size = 0, ncol = 2) +
     NoLegend() &
   violintheme
@@ -518,6 +500,7 @@ VlnPlot(alldata,
 
 if(!file.exists(paste0(owncache,"/firstnormalize.RData"))){
 
+  plan("sequential")
 alldata = NormalizeData(alldata)
 
 suppressWarnings(suppressMessages(alldata <- FindVariableFeatures(alldata, selection.method = "vst",
@@ -542,58 +525,38 @@ if(file.exists(owncache)){
 ```
 
 
-```{r topgenes, fig.height = 3, fig.width = 5}
+```{r topgenes}
 
 top20 <- head(VariableFeatures(alldata), 20)
 
-LabelPoints(plot = VariableFeaturePlot(alldata), points = top20, repel = TRUE) +
-  theme(axis.title = element_text(size = 8),
-        legend.text = element_text(size = 8),
-        axis.text = element_text(size = 8))
+LabelPoints(plot = VariableFeaturePlot(alldata), points = top20, repel = TRUE)
 
 ```
 
 
 # PCA
 
-```{r firstpca, fig.height = 2, fig.width = 4}
+```{r firstpca}
 
-plot_grid(plot_grid(ncol = 3,
+plot_grid(ncol = 3,
           DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
-                  dims = 1:2, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme,
+                  dims = 1:2, shuffle = TRUE) + NoLegend(),
           DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
-                  dims = 3:4, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme,
+                  dims = 3:4, shuffle = TRUE) + NoLegend(),
           DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
-                  dims = 5:6, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme),
-          get_legend(DimPlot(alldata, reduction = "pca_raw", group.by = "orig.ident",
-                  dims = 1:2, shuffle = TRUE) + theme(legend.position = "bottom") + dimtheme),
-          ncol = 1, rel_heights = c(3,1)
-)
-plot_grid(plot_grid(ncol = 3,
+                  dims = 5:6, shuffle = TRUE) + NoLegend())
+plot_grid(ncol = 3,
           DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
-                  dims = 1:2, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme,
+                  dims = 1:2, shuffle = TRUE) + NoLegend(),
           DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
-                  dims = 3:4, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme,
+                  dims = 3:4, shuffle = TRUE) + NoLegend(),
           DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
-                  dims = 5:6, shuffle = TRUE) + NoLegend() + NoAxes() + dimtheme),
-          get_legend(DimPlot(alldata, reduction = "pca_raw", group.by = "Type",
-                  dims = 1:2, shuffle = TRUE) + theme(legend.position = "bottom") + dimtheme),
-          ncol = 1, rel_heights = c(3,1))
+                  dims = 5:6, shuffle = TRUE) + NoLegend())
 
-```
 
-```{r, fig.height = 3, fig.width = 6}
+VizDimLoadings(alldata, dims = 1:5, reduction = "pca_raw", ncol = 5, balanced = T)
 
-VizDimLoadings(alldata, dims = 1:5, reduction = "pca_raw", ncol = 5, balanced = T) &
-  theme(axis.text = element_text(size = 8))
-
-```
-
-```{r, fig.height = 2, fig.width = 4}
-
-ElbowPlot(alldata, reduction = "pca_raw", ndims = 50) + 
-  theme(axis.text = element_text(size = 8),
-        axis.title = element_text(size = 8))
+ElbowPlot(alldata, reduction = "pca_raw", ndims = 50)
 
 
 ```
@@ -601,14 +564,14 @@ ElbowPlot(alldata, reduction = "pca_raw", ndims = 50) +
 
 # UMAP
 
-```{r firstumap, fig.height = 3, fig.width = 6}
+```{r firstumap}
 
 plot_grid(ncol = 3, DimPlot(alldata, reduction = "umap_raw", group.by = "orig.ident",
-                            shuffle = TRUE) + NoAxes() + NoLegend() + dimtheme,
+                            shuffle = TRUE) + NoAxes() + NoLegend(),
     DimPlot(alldata, reduction = "umap_raw", group.by = "Week",
-                            shuffle = TRUE) + NoAxes() + NoLegend() + dimtheme,
+                            shuffle = TRUE) + NoAxes() + NoLegend(),
     DimPlot(alldata, reduction = "umap_raw", group.by = "Type", label = TRUE,
-                            shuffle = TRUE) + NoAxes() + NoLegend() + dimtheme)
+                            shuffle = TRUE) + NoAxes() + NoLegend())
 
 ```
 
@@ -628,6 +591,8 @@ if(!file.exists(paste0(owncache,"/normalizeintegrated.RData"))){
     
     if(!file.exists(paste0(owncache,"/getanchors.RData"))){
 
+      plan("sequential", gc = TRUE)
+      
       alldata <- AddMetaData(alldata, gsub("_IMM","",gsub("_STR","",
                                   gsub("_EPI","",alldata$orig.ident))), 
                            "source")
@@ -651,6 +616,8 @@ if(!file.exists(paste0(owncache,"/normalizeintegrated.RData"))){
       
       message("features selected")
       
+      #plan("multiprocess", workers = 5, gc = TRUE)
+      plan("sequential")
       
       data.list <- future_lapply(X = data.list, FUN = function(x) {
         x <- ScaleData(x, features = features, verbose = FALSE)
@@ -681,6 +648,7 @@ if(!file.exists(paste0(owncache,"/normalizeintegrated.RData"))){
     
     
     
+    plan("sequential")
     alldata <- IntegrateData(anchorset = data.anchors, 
                              dims = 1:30, new.assay.name = "RPCA")
     rm(data.anchors)
@@ -694,6 +662,7 @@ if(!file.exists(paste0(owncache,"/normalizeintegrated.RData"))){
     load(paste0(owncache,"/fullintegration.RData"))
   }
   
+  plan("sequential")
   
   alldata <- ScaleData(alldata)
   alldata <- RunPCA(alldata, npcs = 30)
@@ -711,49 +680,33 @@ if(!file.exists(paste0(owncache,"/normalizeintegrated.RData"))){
 ```
 
 
-```{r, fig.height = 3, fig.width = 6}
+```{r}
 
-plot_grid(ncol = 3,
+plot_grid(ncol = 2,
 
 
   DimPlot(alldata, reduction = "pca", group.by = "orig.ident", shuffle = TRUE) +
-    NoAxes() + ggtitle("PCA integrated") + NoLegend() + dimtheme,
+    NoAxes() + ggtitle("PCA integrated") + NoLegend(),
   DimPlot(alldata, reduction = "umap", group.by = "orig.ident", shuffle = TRUE) +
-    NoAxes() + ggtitle("UMAP integrated") + NoLegend() + dimtheme,
-  get_legend(DimPlot(alldata, reduction = "pca", group.by = "orig.ident", shuffle = TRUE) +
-    NoAxes() + ggtitle("PCA integrated") + dimtheme)
+    NoAxes() + ggtitle("UMAP integrated") + NoLegend()
 )
 
-```
-
-
-```{r, fig.height = 6, fig.width = 6}
-
 DimPlot(alldata, reduction = "umap", split.by = "orig.ident", 
-        ncol = 6)+NoAxes() + NoLegend() & theme(strip.text= element_text(size = 8)) + 
-  dimtheme
-
-```
-
-
-```{r, fig.height = 3, fig.width = 3}
+        ncol = 6)+NoAxes() + NoLegend() & theme(strip.text= element_text(size = 8))
 
 DimPlot(alldata, reduction = "umap", group.by = "Genotype", 
-        shuffle = TRUE) + NoAxes() + dimtheme
+        shuffle = TRUE) + NoAxes()
 
 
 ```
 
 # Plot QC in UMAP
 
-```{r, fig.height = 4, fig.width = 4}
+```{r, fig.height = 10}
 
 FeaturePlot(alldata, reduction = "umap",
             features = qc_feats,
-    order = T, slot = "data", combine = T) & NoAxes() &
-  theme(plot.title = element_text(size = 8),
-        legend.text = element_text(size = 8),
-        legend.key.size = unit(8,"pt"))
+    order = T, slot = "data", combine = T) & NoAxes()
 
 ```
 
@@ -761,20 +714,12 @@ FeaturePlot(alldata, reduction = "umap",
 
 # Plot genes of interest
 
-
-
-
-
-```{r, fig.height = 4, fig.width = 4}
+```{r}
 
 DefaultAssay(alldata) = "RNA"
 
-FeaturePlot(alldata, reduction = "umap",
-            features = c("Mki67","Pcna", "Ptprc","Epcam"),
-    order = T, slot = "data", combine = T) & NoAxes() &
-  theme(plot.title = element_text(size = 8),
-        legend.text = element_text(size = 8),
-        legend.key.size = unit(8,"pt"))
+FeaturePlot(alldata, reduction = "umap", features = c("Mki67","Pcna", "Ptprc","Epcam"),
+    order = T, slot = "data", combine = T, ncol = 2) & NoAxes()
 
 DefaultAssay(alldata) = "RPCA"
 
@@ -811,27 +756,28 @@ if(!file.exists(paste0(owncache,"/fullclustering.RData"))){
 
 ```
 
+```{r}
 
-```{r, fig.height = 2, fig.width = 2}
-
-DimPlot(alldata, label = TRUE) + NoAxes() + NoLegend() + dimtheme
+plan("sequential")
 
 ```
 
-```{r, fig.height = 3, fig.width = 6}
+```{r}
+
+DimPlot(alldata, label = TRUE) + NoAxes() + NoLegend()
+
+```
+
+```{r, fig.height = 3}
 
 DefaultAssay(alldata) = "RNA"
-DotPlot(alldata, features = c("Epcam","Ptprc")) + coord_flip() + 
-  theme(legend.title = element_text(size = 8),
-        legend.text = element_text(size = 8),
-        axis.text = element_text(size = 8),
-        axis.title = element_text(size = 8))
+DotPlot(alldata, features = c("Epcam","Ptprc")) + coord_flip()
 DefaultAssay(alldata) = "RPCA"
 
 ```
 
 
-```{r, fig.height = 3, fig.width = 5}
+```{r}
 
 ggplot(alldata@meta.data, aes(fill = Type, x = RPCA_cluster)) + geom_bar(position = "fill")
 
@@ -842,12 +788,9 @@ ggplot(alldata@meta.data, aes(fill = orig.ident, x = RPCA_cluster)) +
 ```
 
 
-```{r, fig.height = 3, fig.width = 6}
+```{r}
 
-VlnPlot(alldata, group.by = "RPCA_cluster", features = qc_feats, pt.size = 0, ncol = 2) &
-  theme(plot.title = element_text(size = 8),
-        axis.text = element_text(size = 8),
-        axis.title = element_blank()) + violintheme
+VlnPlot(alldata, group.by = "RPCA_cluster", features = qc_feats, pt.size = 0, ncol = 2)
 
 ```
 
@@ -861,7 +804,7 @@ if(!file.exists(paste0(owncache,"/lastscale.RData")) |
    !file.exists(paste0(datadir,"/../R_objects/immune_data.rds")) |
    !file.exists(paste0(datadir,"/../R_objects/stroma_data.rds")) |
    !file.exists(paste0(datadir,"/../R_objects/epithelial_data.rds"))){
-
+plan("sequential")
   
   
   immuneclusters = c(0,1,3,6,7,13,14,15,18)
@@ -894,7 +837,6 @@ gc()
 immunedata = subset(cleandata, cells = immunecells)
 immunedata@active.assay = "RNA"
 immunedata[["RPCA"]] = NULL
-immunedata[["FB"]] = subset(alldata_FB, cells = Cells(immunedata))[["FB"]]
 saveRDS(immunedata, paste0(datadir,"/../R_objects/immune_data.rds"))
 rm(immunedata)
 
@@ -922,7 +864,7 @@ cleandata <- RunPCA(cleandata, npcs = 30)
 cleandata <- RunUMAP(cleandata, dims = 1:30)
 save(cleandata, file = paste0(owncache,"/lastscale.RData"))
 }else{
-  rm(alldata)
+  rm(cleandata)
   gc()
   load(paste0(owncache,"/lastscale.RData"))
 }
@@ -931,13 +873,12 @@ save(cleandata, file = paste0(owncache,"/lastscale.RData"))
 
 ## UMAPs
 
-```{r dimplots,fig.height = 2, fig.width = 2}
+```{r dimplots,fig.height = 3, fig.width = 3}
 
 
 DimPlot(cleandata, reduction = "umap", label = TRUE,
                         group.by = "RPCA_cluster", shuffle = TRUE) +
-            NoAxes() + labs(title = "Clustering") + NoLegend() + 
-  theme(plot.title = element_text(size = 10)) + dimtheme
+            NoAxes() + labs(title = "Clustering") + NoLegend()
 
 
 ```
@@ -948,7 +889,7 @@ DimPlot(cleandata, reduction = "umap", label = TRUE,
 ```{r, fig.height = 3, fig.width=7}
 
 DimPlot(cleandata, reduction = "umap", split.by = "Type") +
-  NoAxes() + NoLegend() + dimtheme
+  NoAxes() + NoLegend()
 
 ```
 
@@ -964,16 +905,16 @@ modelcolors = c(WT = "#9E68B1", Il10KO = "#FCA549")
 
 
 DimPlot(cleandata, reduction = "umap", group.by = "Week", shuffle = TRUE) +
-            NoAxes() + d_timecolors + dimtheme
+            NoAxes() + d_timecolors
 DimPlot(cleandata, reduction = "umap", group.by = "Type", shuffle = TRUE) +
             NoAxes() + labs(title = "Sort fraction") +
-             scale_color_manual(values = typecolors) + dimtheme
+             scale_color_manual(values = typecolors)
 
 
 DimPlot(cleandata, reduction = "umap", group.by = "Genotype", 
                   shuffle = TRUE) +
             NoAxes() + 
-             scale_color_manual(values = modelcolors) + dimtheme
+             scale_color_manual(values = modelcolors)
 
 
 
