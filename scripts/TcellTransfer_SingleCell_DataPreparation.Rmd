@@ -42,6 +42,7 @@ options(future.globals.maxSize = 100 * 1024^3)
 library(future.apply)
 
 datadir = "../data/SingleCell/TcellTransfer/expression_matrices"
+FBdatadir = "../data/SingleCell/TcellTransfer/expression_matrices_SCID_FB"
 
 owncache = "../data/SingleCell/TcellTransfer/cache/"
 
@@ -118,6 +119,25 @@ alldata = merge(x = all_matrices[[sampleorder[1]]],
   alldata_FB = merge(immune_matrices[[1]],
                    immune_matrices[-1],
                    add.cell.ids = immunesamples)
+  
+
+  scid_fbs = lapply(list.files(FBdatadir, full.names = TRUE), function(f){
+    fbtable = as.matrix(read.table(f))
+    colnames(fbtable) = gsub("\\.","-", colnames(fbtable))
+    rownames(fbtable) = gsub("_","-", rownames(fbtable))
+    
+    sample =  gsub("_P","",gsub(".tsv","",gsub(".*/","",f)))
+    
+    CreateSeuratObject(fbtable, project = sample, assay = "FB")
+  })
+  
+  alldata_FB = merge(
+    subset(alldata_FB, 
+           idents = metadata$X.library.name[metadata$genotype %in% "Rag2 KO" & 
+                                              metadata$X.library.name %in% alldata_FB$orig.ident]),
+    merge(scid_fbs[[1]], scid_fbs[-1],
+        add.cell.ids = gsub("_P","",gsub(".tsv","",gsub(".*/","",list.files(FBdatadir, full.names = TRUE))))))
+  
   
   if(file.exists(owncache)){
     save(alldata,alldata_FB, file = paste0(owncache,"/loading_matrices.RData"))
