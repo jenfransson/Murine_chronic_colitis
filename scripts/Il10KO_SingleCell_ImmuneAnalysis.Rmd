@@ -38,6 +38,7 @@ library(dplyr)
 library(reshape2)
 
 source("../code/SingleCell/color_list.R")
+source("../code/SingleCell/NMFsetup.R", chdir = TRUE)
 
 ```
 
@@ -693,12 +694,469 @@ neutrophils = subset(alldata, cells = WhichCells(alldata, expression = neutrophi
 rm(alldata)
 trash = gc()
 
+```
 
-saveRDS(Tcells, paste0(datadir,"Tcells.rds"))
-saveRDS(Bcells, paste0(datadir,"Bcells.rds"))
-saveRDS(neutrophils, paste0(datadir,"neutrophils.rds"))
+
+
+## NMF
+
+### T cells
+
+
+```{r}
+
+ntop = 40
+downsample_n = 1000
+txt = element_text(size = 8)
 
 ```
+
+
+```{r}
+
+Tcells@active.assay <- "RNA"
+
+
+Tcells <- FindVariableFeatures(Tcells)
+Tcells <- ScaleData(Tcells, features = VariableFeatures(Tcells))
+
+Tcells <- RunNMF(object = Tcells, assay = "RNA", nfactors = ntop,
+              n.cores = 1)
+ 
+
+for(i in 1:ntop){
+  Tcells <- AddMetaData(Tcells, Tcells@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+                     paste0("nmf_",i))
+}
+
+Tcells$Week = as.numeric(gsub("W","",Tcells$Week))
+
+Tcells = AddMetaData(Tcells, factor(paste(Tcells$Genotype, Tcells$Week),
+                              levels = c("WT 6", 
+                                         paste0("Il10KO ", 
+                                               c(6,8,10,12,14)))), 
+                  "G_W")
+
+```
+
+```{r}
+
+pvaluelist = getfactorpvalues_Il10(Tcells, downsample_n, ntop)
+modelpvalues = pvaluelist$modelpvalues
+rank_modelpvalues = pvaluelist$rank_modelpvalues
+rm(pvaluelist)
+
+
+pvaluegg = melt(modelpvalues, variable.name = "factor",
+                value.name =  "p.value")
+pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
+
+
+Tcells_values = Tcells@meta.data[,grep("^nmf_", colnames(Tcells@meta.data))]
+
+Tcells_scaled = apply(Tcells_values, 2, scale)
+
+Tcells_scaled_means_id = aggregate(Tcells_scaled, by = list(Tcells$G_W), mean)
+Tcells_means_id = aggregate(Tcells_values, by = list(Tcells$G_W), mean)
+Tcells_means_scaled_id = as.data.frame(apply(Tcells_means_id[,-1], 2, scale))
+Tcells_means_scaled_id$Group.1 = Tcells_means_id$Group.1
+
+Tcells_scaled_means_cluster = aggregate(Tcells_scaled, by = list(Tcells$NamedCluster), mean)
+Tcells_means_cluster = aggregate(Tcells_values, by = list(Tcells$NamedCluster), mean)
+if(nrow(Tcells_means_cluster)==1){
+  Tcells_means_scaled_cluster = as.data.frame(rbind(apply(Tcells_means_cluster[,-1], 2, scale)))
+  Tcells_means_scaled_cluster$Group.1 = Tcells_means_cluster$Group.1
+  Tcells_means_scaled_cluster[1,is.nan(as.numeric(Tcells_means_scaled_cluster[1,]))] = 0
+}else{
+  Tcells_means_scaled_cluster = as.data.frame(apply(Tcells_means_cluster[,-1], 2, scale))
+  Tcells_means_scaled_cluster$Group.1 = Tcells_means_cluster$Group.1
+}
+
+```
+
+```{r, fig.show="hide"}
+
+ph_sample = pheatmap(Tcells_means_scaled_id[,paste0("nmf_", 1:ntop)])
+
+ph_order = ph_sample$tree_col$order
+
+```
+
+```{r, fig.width = 2.5, fig.height = 6}
+
+my_dotp = ggplot(melt(Tcells_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + 
+  geom_vline(color = "white", xintercept = 1.5) +
+  scale_fill_viridis_c() + 
+  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt,
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_size_continuous(limits = c(0,100), range= c(0,3))
+
+my_dotp_cl = ggplot(melt(Tcells_means_scaled_cluster), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + scale_fill_viridis_c() +
+  theme_classic() +
+  theme(axis.text = txt,
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.title = element_blank(),
+        legend.text = txt,
+        axis.text.y = element_blank(),
+        legend.key.size = unit(8,"pt"),
+        plot.title = element_blank(),
+        legend.position = "bottom",
+        legend.title = txt) + 
+  scale_size_continuous(limits = c(0,100))
+
+lmp = ggplot(pvaluegg,
+       aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
+  geom_tile(aes(fill = -log10(p.value))) + 
+  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
+  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        legend.title = element_text(size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
+
+scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
+               max(my_dotp$data$value, my_dotp_cl$data$value))
+
+plot_grid(my_dotp + 
+            scale_fill_viridis_c(limits = scalerange) + 
+            theme(axis.title = element_blank(),
+                  legend.position = "bottom",
+                      legend.key.size = unit(8,"pt")),
+          my_dotp_cl + 
+            scale_fill_viridis_c(limits = scalerange),
+          lmp + 
+            labs(fill = ""), 
+          align = "h", ncol = 3, rel_widths = c(3.5,2.5,1)
+          )
+
+```
+
+```{r, fig.height = 2, fig.width = 4}
+
+showfactors_Il10(Tcells)
+
+```
+
+
+### B cells
+
+```{r}
+
+ntop = 40
+downsample_n = 1000
+txt = element_text(size = 8)
+
+```
+
+```{r}
+
+Bcells@active.assay <- "RNA"
+
+
+Bcells <- FindVariableFeatures(Bcells)
+Bcells <- ScaleData(Bcells, features = VariableFeatures(Bcells))
+
+Bcells <- RunNMF(object = Bcells, assay = "RNA", nfactors = ntop,
+              n.cores = 1)
+ 
+
+for(i in 1:ntop){
+  Bcells <- AddMetaData(Bcells, Bcells@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+                     paste0("nmf_",i))
+}
+
+Bcells$Week = as.numeric(gsub("W","",Bcells$Week))
+
+Bcells = AddMetaData(Bcells, factor(paste(Bcells$Genotype, Bcells$Week),
+                              levels = c("WT 6", 
+                                         paste0("Il10KO ", 
+                                               c(6,8,10,12,14)))), 
+                  "G_W")
+
+```
+
+```{r}
+
+pvaluelist = getfactorpvalues_Il10(Bcells, downsample_n, ntop)
+modelpvalues = pvaluelist$modelpvalues
+rank_modelpvalues = pvaluelist$rank_modelpvalues
+rm(pvaluelist)
+
+
+pvaluegg = melt(modelpvalues, variable.name = "factor",
+                value.name =  "p.value")
+pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
+
+
+Bcells_values = Bcells@meta.data[,grep("^nmf_", colnames(Bcells@meta.data))]
+
+Bcells_scaled = apply(Bcells_values, 2, scale)
+
+Bcells_scaled_means_id = aggregate(Bcells_scaled, by = list(Bcells$G_W), mean)
+Bcells_means_id = aggregate(Bcells_values, by = list(Bcells$G_W), mean)
+Bcells_means_scaled_id = as.data.frame(apply(Bcells_means_id[,-1], 2, scale))
+Bcells_means_scaled_id$Group.1 = Bcells_means_id$Group.1
+
+Bcells_scaled_means_cluster = aggregate(Bcells_scaled, by = list(Bcells$NamedCluster), mean)
+Bcells_means_cluster = aggregate(Bcells_values, by = list(Bcells$NamedCluster), mean)
+if(nrow(Bcells_means_cluster)==1){
+  Bcells_means_scaled_cluster = as.data.frame(rbind(apply(Bcells_means_cluster[,-1], 2, scale)))
+  Bcells_means_scaled_cluster$Group.1 = Bcells_means_cluster$Group.1
+  Bcells_means_scaled_cluster[1,is.nan(as.numeric(Bcells_means_scaled_cluster[1,]))] = 0
+}else{
+  Bcells_means_scaled_cluster = as.data.frame(apply(Bcells_means_cluster[,-1], 2, scale))
+  Bcells_means_scaled_cluster$Group.1 = Bcells_means_cluster$Group.1
+}
+
+```
+
+```{r, fig.show="hide"}
+
+ph_sample = pheatmap(Bcells_means_scaled_id[,paste0("nmf_", 1:ntop)])
+
+ph_order = ph_sample$tree_col$order
+
+```
+
+```{r, fig.width = 2.6, fig.height = 6}
+
+
+
+my_dotp = ggplot(melt(Bcells_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + 
+  geom_vline(color = "white", xintercept = 1.5) +
+  scale_fill_viridis_c() + 
+  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt,
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_size_continuous(limits = c(0,100), range= c(0,3))
+
+my_dotp_cl = ggplot(melt(Bcells_means_scaled_cluster), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + scale_fill_viridis_c() +
+  theme_classic() +
+  theme(axis.text = txt,
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.title = element_blank(),
+        legend.text = txt,
+        axis.text.y = element_blank(),
+        legend.key.size = unit(8,"pt"),
+        plot.title = element_blank(),
+        legend.position = "bottom",
+        legend.title = txt) + 
+  scale_size_continuous(limits = c(0,100))
+
+lmp = ggplot(pvaluegg,
+       aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
+  geom_tile(aes(fill = -log10(p.value))) + 
+  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
+  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        legend.title = element_text(size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
+
+scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
+               max(my_dotp$data$value, my_dotp_cl$data$value))
+
+plot_grid(my_dotp + 
+            scale_fill_viridis_c(limits = scalerange) + 
+            theme(axis.title = element_blank(),
+                  legend.position = "bottom",
+                      legend.key.size = unit(8,"pt")),
+          my_dotp_cl + 
+            scale_fill_viridis_c(limits = scalerange),
+          lmp + 
+            labs(fill = ""), 
+          align = "h", ncol = 3, rel_widths = c(3.5,1.8,1)
+          )
+
+```
+
+
+```{r, fig.height = 2, fig.width = 4}
+
+showfactors_Il10(Bcells)
+
+```
+
+
+### Neutrophils
+
+
+
+```{r}
+
+ntop = 20
+downsample_n = 1000
+txt = element_text(size = 8)
+
+```
+
+
+```{r}
+
+neutrophils@active.assay <- "RNA"
+
+
+neutrophils <- FindVariableFeatures(neutrophils)
+neutrophils <- ScaleData(neutrophils, features = VariableFeatures(neutrophils))
+
+neutrophils <- RunNMF(object = neutrophils, assay = "RNA", nfactors = ntop,
+              n.cores = 1)
+ 
+
+for(i in 1:ntop){
+  neutrophils <- AddMetaData(neutrophils, neutrophils@reductions$NMF@cell.embeddings[,paste0("factor_",i)],
+                     paste0("nmf_",i))
+}
+
+neutrophils$Week = as.numeric(gsub("W","",neutrophils$Week))
+
+neutrophils = AddMetaData(neutrophils, factor(paste(neutrophils$Genotype, neutrophils$Week),
+                              levels = c("WT 6", 
+                                         paste0("Il10KO ", 
+                                               c(6,8,10,12,14)))), 
+                  "G_W")
+
+```
+
+```{r}
+
+pvaluelist = getfactorpvalues_Il10(neutrophils, downsample_n, ntop)
+modelpvalues = pvaluelist$modelpvalues
+rank_modelpvalues = pvaluelist$rank_modelpvalues
+rm(pvaluelist)
+
+
+pvaluegg = melt(modelpvalues, variable.name = "factor",
+                value.name =  "p.value")
+pvaluegg$depvar = factor(pvaluegg$depvar, levels = unique(pvaluegg$depvar))
+
+
+neutrophils_values = neutrophils@meta.data[,grep("^nmf_", colnames(neutrophils@meta.data))]
+
+neutrophils_scaled = apply(neutrophils_values, 2, scale)
+
+neutrophils_scaled_means_id = aggregate(neutrophils_scaled, by = list(neutrophils$G_W), mean)
+neutrophils_means_id = aggregate(neutrophils_values, by = list(neutrophils$G_W), mean)
+neutrophils_means_scaled_id = as.data.frame(apply(neutrophils_means_id[,-1], 2, scale))
+neutrophils_means_scaled_id$Group.1 = neutrophils_means_id$Group.1
+
+neutrophils_scaled_means_cluster = aggregate(neutrophils_scaled, by = list(neutrophils$NamedCluster), mean)
+neutrophils_means_cluster = aggregate(neutrophils_values, by = list(neutrophils$NamedCluster), mean)
+if(nrow(neutrophils_means_cluster)==1){
+  neutrophils_means_scaled_cluster = as.data.frame(rbind(apply(neutrophils_means_cluster[,-1], 2, scale)))
+  neutrophils_means_scaled_cluster$Group.1 = neutrophils_means_cluster$Group.1
+  neutrophils_means_scaled_cluster[1,is.nan(as.numeric(neutrophils_means_scaled_cluster[1,]))] = 0
+}else{
+  neutrophils_means_scaled_cluster = as.data.frame(apply(neutrophils_means_cluster[,-1], 2, scale))
+  neutrophils_means_scaled_cluster$Group.1 = neutrophils_means_cluster$Group.1
+}
+
+```
+
+```{r, fig.show="hide"}
+
+ph_sample = pheatmap(neutrophils_means_scaled_id[,paste0("nmf_", 1:ntop)])
+
+ph_order = ph_sample$tree_col$order
+
+```
+
+```{r, fig.width = 2.6, fig.height = 4}
+
+
+
+my_dotp = ggplot(melt(neutrophils_means_scaled_id), 
+                 aes(x = Group.1, 
+                     y = factor(variable, 
+                                levels = rev(paste0("nmf_",ph_order))))) +
+  geom_tile(aes(fill = value)) + 
+  geom_vline(color = "white", xintercept = 1.5) +
+  scale_fill_viridis_c() + 
+  scale_y_discrete(labels = function(x){gsub("nmf_", "f",x)}) + 
+  theme_classic() + 
+  theme(axis.text = txt,
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.text = txt,
+        legend.title = txt,
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_size_continuous(limits = c(0,100), range= c(0,3))
+
+
+lmp = ggplot(pvaluegg,
+       aes(y = factor(factor, levels = rev(paste0("nmf_",ph_order))), x = depvar)) + 
+  geom_tile(aes(fill = -log10(p.value))) + 
+  scale_fill_viridis_c(option = "inferno", na.value = "#FCFFA4FF", limits = c(0,NA)) + 
+  scale_x_discrete(labels = function(x){gsub("SCID","",x)}) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        legend.title = element_text(size = 8),
+        legend.position = "bottom",
+        legend.direction = "vertical",
+        legend.text = element_text(size = 8),
+        legend.key.size = unit(8,"pt"))
+
+scalerange = c(min(my_dotp$data$value, my_dotp_cl$data$value),
+               max(my_dotp$data$value, my_dotp_cl$data$value))
+
+plot_grid(my_dotp + 
+            scale_fill_viridis_c(limits = scalerange) + 
+            theme(axis.title = element_blank(),
+                  legend.position = "bottom",
+                      legend.key.size = unit(8,"pt")),
+          lmp + 
+            labs(fill = ""), 
+          align = "h", ncol = 3, rel_widths = c(3.5,1)
+          )
+
+```
+
+```{r, fig.height = 2, fig.width = 4}
+
+showfactors_Il10(neutrophils)
+
+```
+
+
 
 # Session info
 
