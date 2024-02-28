@@ -2,7 +2,7 @@
 title: "Il10KO single cell analysis (Stroma)"
 editor_options:
   chunk_output_type: inline
-date: "`r format(Sys.time(), '%d %B, %Y')`"
+date: "28 February, 2024"
 output:
   bookdown::html_document2:
     code_folding: hide

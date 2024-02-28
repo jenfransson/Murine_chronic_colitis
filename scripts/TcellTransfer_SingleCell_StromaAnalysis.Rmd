@@ -34,6 +34,10 @@ library(clustree)
 library(dplyr)
 library(reshape2)
 
+library(future)
+plan("sequential")
+options(future.globals.maxSize = 50 * 1024^3)
+
 source("../code/SingleCell/color_list.R")
 
 ```
