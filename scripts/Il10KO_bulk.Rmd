@@ -5,13 +5,13 @@ editor_options:
   chunk_output_type: inline
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
+  pdf_document:
+    toc: yes
   bookdown::html_document2:
     code_folding: hide
     toc: yes
     toc_float:
       collapsed: no
-  pdf_document:
-    toc: yes
 params:
   dataset: 1
 ---
@@ -65,7 +65,7 @@ The gene expression matrices are available from GEO. In order to generate them, 
 
 ```{r, eval = FALSE}
 
-rawdatadir = "../data/Bulk/Il10KO/kallisto/")
+rawdatadir = "../data/Bulk/Il10KO/kallisto/"
 
 ### Generation of counts and TPM tables -
 ####### Final files can be downloaded from GEO, but the code below describes
