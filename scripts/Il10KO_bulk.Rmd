@@ -264,7 +264,8 @@ g2<- ggplot(pcdata, aes(x = PC1,y = histologicalscore)) +
   geom_point(aes(color = log10(lipocalinngg), shape = genotype),
              size =pointsize, stroke = strokewidth) +
   theme_classic() + theme(legend.position = "bottom") + plottheme + 
-  theme(axis.ticks.y = element_line(color = "black", linewidth = 0.25))
+  theme(axis.ticks.y = element_line(color = "black", linewidth = 0.25)) + 
+  labs(color = "Lipocalin\nlog10(ng/g))")
 
 plot_grid(g1 + theme(legend.position = "right",
                      legend.key.size = unit(8,"pt")), 
