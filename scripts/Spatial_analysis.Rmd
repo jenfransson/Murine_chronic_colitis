@@ -1,5 +1,5 @@
 ---
-title: "Basic Analysis of IL10KO visium"
+title: "Analysis of Il10KO and Rag2KO Visium data"
 output:
   html_document:
     toc: yes
