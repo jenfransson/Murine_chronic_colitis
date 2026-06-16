@@ -70,3 +70,4 @@ data/Spatial/cellranger_output
 scripts/tests
 scripts/*.pdf
 *donotpublish*
+**/ignore
